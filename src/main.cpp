@@ -1,6 +1,10 @@
 #include "main.h"
 #include "preview.h"
 #include <cstring>
+#include <filesystem>
+#include <iomanip>
+#include <sys/stat.h>
+#include <direct.h>
 
 static std::string startTimeString;
 
@@ -97,9 +101,14 @@ void saveImage() {
 	}
 
 	std::string filename = renderState->imageName;
+	std::string filepath = "../img/" + filename + "/";
 	std::ostringstream ss;
-	ss << filename << "." << startTimeString << "." << samples << "samp";
+	ss << filepath << filename << "." << startTimeString << "." << samples << "samp";
 	filename = ss.str();
+
+	// Create directory if it doesn't exist
+	_mkdir(filepath.c_str());
+
 
 	// CHECKITOUT
 	img.savePNG(filename);
