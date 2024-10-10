@@ -19,6 +19,7 @@
 #define COMPACT 1
 #define SORT_BY_MATERIAL 0
 #define CACHE_FIRST_BOUNCE 1
+#define AA 1
 
 class GuiDataContainer
 {
