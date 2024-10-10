@@ -282,45 +282,63 @@ __global__ void shadeFakeMaterial(
 	}
 }
 
+/**
+ * CUDA kernel for shading materials in a path tracer.
+ *
+ * @param iter Current iteration of the path tracer
+ * @param num_paths Total number of path segments being processed
+ * @param shadeableIntersections Array of intersection data for each path
+ * @param pathSegments Array of path segments being traced
+ * @param materials Array of material data for the scene
+ * @param depth Current bounce depth in the path tracing process
+ */
 __global__ void shadeMaterials(
-	int iter
-	, int num_paths
-	, ShadeableIntersection* shadeableIntersections
-	, PathSegment* pathSegments
-	, Material* materials
-	, int depth
+	int iter,
+	int num_paths,
+	ShadeableIntersection* shadeableIntersections,
+	PathSegment* pathSegments,
+	Material* materials,
+	int depth
 )
 {
+	// Calculate global thread index
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	// Exit if this thread is beyond the number of paths we're processing
 	if (idx >= num_paths) return;
+
+	// Exit if this path has exhausted its allowed bounces
 	if (pathSegments[idx].remainingBounces == 0) return;
 
+	// Get the intersection data for this path segment
 	ShadeableIntersection intersection = shadeableIntersections[idx];
-	if (intersection.t > 0.f) { // if the intersection exists...
-		// Set up the RNG
+
+	// Process the intersection if it exists (t > 0 indicates a valid intersection)
+	if (intersection.t > 0.f) {
+		// Initialize random number generator for this thread
 		thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, depth);
 		thrust::uniform_real_distribution<float> u01(0, 1);
 
+		// Get the material properties for the intersected object
 		Material material = materials[intersection.materialId];
 		glm::vec3 materialColor = material.color;
 
-		// If the material indicates that the object was a light, "light" the ray
+		// Check if the intersected object is a light source
 		if (material.emittance > 0.f) {
-			pathSegments[idx].color += (materialColor * material.emittance)
-				* pathSegments[idx].throughput;
+			// If it's a light, add its contribution to the path color
+			pathSegments[idx].color += (materialColor * material.emittance) * pathSegments[idx].throughput;
+			// Terminate the path as it has hit a light source
 			pathSegments[idx].remainingBounces = 0;
 		}
 		else {
-			//glm::vec3 isect = pathSegments[idx].ray.direction * intersection.t + pathSegments[idx].ray.origin;;
+			// For non-emissive materials, calculate the intersection point
 			glm::vec3 isect = getPointOnRay(pathSegments[idx].ray, intersection.t);
+			// Generate a new ray direction based on the material properties
 			scatterRay(pathSegments[idx], isect, intersection.surfaceNormal, material, rng);
 		}
-		// If there was no intersection, color the ray black.
-		// Lots of renderers use 4 channel color, RGBA, where A = alpha, often
-		// used for opacity, in which case they can indicate "no opacity".
-		// This can be useful for post-processing and image compositing.
 	}
 	else {
+		// If there's no intersection, set the path color to black and terminate it
 		pathSegments[idx].color = glm::vec3(0.0f);
 		pathSegments[idx].remainingBounces = 0;
 	}
