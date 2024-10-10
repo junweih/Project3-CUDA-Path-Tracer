@@ -38,6 +38,7 @@ struct Material {
     float hasRefractive;
     float indexOfRefraction;
     float emittance;
+    float hasTransmission;
 };
 
 struct Camera {
@@ -64,6 +65,7 @@ struct PathSegment {
     glm::vec3 color;
     int pixelIndex;
     int remainingBounces;
+    glm::vec3 throughput;   // represents how materials we have encountered so far will alter the color of a light source when it scttaers off of them
 };
 
 // Use with a corresponding PathSegment to do:
