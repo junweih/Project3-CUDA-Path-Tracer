@@ -76,7 +76,7 @@ static Material* dev_materials = NULL;
 static PathSegment* dev_paths = NULL;
 static ShadeableIntersection* dev_intersections = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
-// ...
+static ShadeableIntersection* dev_first_bounce_cache = NULL;
 
 void InitDataContainer(GuiDataContainer* imGuiData)
 {
@@ -104,6 +104,9 @@ void pathtraceInit(Scene* scene) {
 	cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
 	// TODO: initialize any extra device memeory you need
+#if CACHE_FIRST_BOUNCE
+	cudaMalloc(&dev_first_bounce_cache, pixelcount * sizeof(ShadeableIntersection));
+#endif
 
 	checkCUDAError("pathtraceInit");
 }
@@ -115,6 +118,9 @@ void pathtraceFree() {
 	cudaFree(dev_materials);
 	cudaFree(dev_intersections);
 	// TODO: clean up any extra device memory you created
+#if CACHE_FIRST_BOUNCE
+	cudaFree(dev_first_bounce_cache);
+#endif
 
 	checkCUDAError("pathtraceFree");
 }
@@ -417,16 +423,31 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 		// clean shading chunks
 		cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
-		// tracing
+		// Tracing
 		dim3 numblocksPathSegmentTracing = (num_paths + blockSize1d - 1) / blockSize1d;
+
+#if CACHE_FIRST_BOUNCE
+		if (depth == 0 && iter == 1) {
+			// First iteration, first bounce: compute and cache intersections
+			computeIntersections << <numblocksPathSegmentTracing, blockSize1d >> > (
+				depth, num_paths, dev_paths, dev_geoms, hst_scene->geoms.size(), dev_first_bounce_cache);
+			cudaMemcpy(dev_intersections, dev_first_bounce_cache, num_paths * sizeof(ShadeableIntersection), cudaMemcpyDeviceToDevice);
+		}
+		else if (depth == 0) {
+			// Subsequent iterations, first bounce: use cached intersections
+			cudaMemcpy(dev_intersections, dev_first_bounce_cache, num_paths * sizeof(ShadeableIntersection), cudaMemcpyDeviceToDevice);
+		}
+		else {
+			// All other bounces: compute intersections normally
+			computeIntersections << <numblocksPathSegmentTracing, blockSize1d >> > (
+				depth, num_paths, dev_paths, dev_geoms, hst_scene->geoms.size(), dev_intersections);
+		}
+#else
+		// Original code without caching
 		computeIntersections << <numblocksPathSegmentTracing, blockSize1d >> > (
-			depth
-			, num_paths
-			, dev_paths
-			, dev_geoms
-			, hst_scene->geoms.size()
-			, dev_intersections
-			);
+			depth, num_paths, dev_paths, dev_geoms, hst_scene->geoms.size(), dev_intersections);
+#endif
+
 		checkCUDAError("trace one bounce");
 		cudaDeviceSynchronize();
 
