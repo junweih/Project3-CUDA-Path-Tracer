@@ -441,12 +441,23 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 		checkCUDAError("shadeMaterials failed");
 
 #if COMPACT
-		// Partition active paths
-		PathSegment* new_end = thrust::partition(thrust::device, dev_paths, dev_paths + num_paths, IsActivePath());
-		num_paths = new_end - dev_paths;
+		// Partition paths, moving active ones to the front
+		PathSegment* firstInactivePath = thrust::partition(thrust::device,
+			dev_paths,
+			dev_paths + num_paths,
+			IsActivePath());
+
+		// Update the count of active paths
+		int numActivePaths = firstInactivePath - dev_paths;
+
+		// Update the total number of paths we're tracking
+		num_paths = numActivePaths;
 
 		// Check termination conditions
-		if (num_paths == 0 || depth >= traceDepth) {
+		bool allPathsTerminated = (numActivePaths == 0);
+		bool maxDepthReached = (depth >= traceDepth);
+
+		if (allPathsTerminated || maxDepthReached) {
 			iterationComplete = true;
 		}
 #else
