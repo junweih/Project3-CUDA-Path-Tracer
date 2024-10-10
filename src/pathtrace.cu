@@ -341,6 +341,15 @@ struct IsActivePath
 	}
 };
 
+struct materialSort
+{
+	__host__ __device__
+		bool operator()(const ShadeableIntersection& isect1, ShadeableIntersection& isect2)
+	{
+		return isect1.materialId < isect2.materialId;
+	}
+};
+
 #pragma endregion
 
 /**
@@ -429,6 +438,11 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 	  // materials you have in the scenefile.
 	  // TODO: compare between directly shading the path segments and shading
 	  // path segments that have been reshuffled to be contiguous in memory.
+
+#if SORT_BY_MATERIAL
+		// sort rays by material type 
+		thrust::sort_by_key(thrust::device, dev_intersections, dev_intersections + num_paths, dev_paths, materialSort());
+#endif
 
 		shadeMaterials << <numblocksPathSegmentTracing, blockSize1d >> > (
 			iter,

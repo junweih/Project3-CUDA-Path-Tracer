@@ -17,6 +17,7 @@
 #define OFFSET            0.01f
 
 #define COMPACT 1
+#define SORT_BY_MATERIAL 1
 
 class GuiDataContainer
 {
