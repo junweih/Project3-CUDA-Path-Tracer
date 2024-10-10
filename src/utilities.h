@@ -16,6 +16,8 @@
 #define EPSILON           0.0001f
 #define OFFSET            0.01f
 
+#define COMPACT 1
+
 class GuiDataContainer
 {
 public:

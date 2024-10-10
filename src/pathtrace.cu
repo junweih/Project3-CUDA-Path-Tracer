@@ -4,6 +4,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/random.h>
 #include <thrust/remove.h>
+#include <thrust/partition.h>
 
 #include "sceneStructs.h"
 #include "scene.h"
@@ -118,6 +119,7 @@ void pathtraceFree() {
 	checkCUDAError("pathtraceFree");
 }
 
+#pragma region Kernel
 /**
 * Generate PathSegments with rays from the camera through the screen into the
 * scene, which is the first bounce of rays.
@@ -330,6 +332,17 @@ __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iteration
 	}
 }
 
+struct IsActivePath
+{
+	__host__ __device__
+		bool operator()(const PathSegment& ps)
+	{
+		return ps.remainingBounces > 0;
+	}
+};
+
+#pragma endregion
+
 /**
  * Wrapper for the __global__ call that sets up the kernel calls and does a ton
  * of memory management
@@ -427,8 +440,18 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 			);
 		checkCUDAError("shadeMaterials failed");
 
+#if COMPACT
+		// Partition active paths
+		PathSegment* new_end = thrust::partition(thrust::device, dev_paths, dev_paths + num_paths, IsActivePath());
+		num_paths = new_end - dev_paths;
 
+		// Check termination conditions
+		if (num_paths == 0 || depth >= traceDepth) {
+			iterationComplete = true;
+		}
+#else
 		iterationComplete = (depth == traceDepth);
+#endif
 
 		if (guiData != NULL)
 		{
