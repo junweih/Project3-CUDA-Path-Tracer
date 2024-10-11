@@ -39,6 +39,14 @@ void checkCUDAErrorFn(const char* msg, const char* file, int line) {
 #endif
 }
 
+// Add these parameters to your Camera struct or pass them separately
+#if DOF
+struct DepthOfFieldParams {
+	float focalLength;    // Distance to the focal plane
+	float aperture;       // Size of the lens aperture
+};
+#endif
+
 __host__ __device__
 thrust::default_random_engine makeSeededRandomEngine(int iter, int index, int depth) {
 	int h = utilhash((1 << 31) | (depth << 22) | iter) ^ utilhash(index);
@@ -150,7 +158,11 @@ __device__ void generateAAOffsets(AAJitter* offsets, int numSamples) {
 * motion blur - jitter rays "in time"
 * lens effect - jitter ray origin positions based on a lens
 */
-__global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, PathSegment* pathSegments)
+__global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, PathSegment* pathSegments
+#if DOF
+	, DepthOfFieldParams dof
+#endif
+)
 {
 	int x = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -159,15 +171,15 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 		int index = x + (y * cam.resolution.x);
 		PathSegment& segment = pathSegments[index];
 
-		segment.ray.origin = cam.position;
 		segment.color = glm::vec3(0.0f);
 		segment.throughput = glm::vec3(1.0f);
+
+		thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
+		thrust::uniform_real_distribution<float> u01(0, 1);
 
 		float u = (float)x;
 		float v = (float)y;
 
-		thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
-		thrust::uniform_real_distribution<float> u01(0, 1);
 #if SSAA
 		// Stochastic Sampled Anti-Aliasing
 		AAJitter aaOffsets[AA_SAMPLES];
@@ -183,7 +195,6 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 		v += u01(rng) * 0.1f;
 #elif AA
 		// Use a simple jittering method for anti-aliasing
-
 		u += u01(rng);
 		v += u01(rng);
 #else
@@ -192,10 +203,30 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 		v += 0.5f;
 #endif
 
-		segment.ray.direction = glm::normalize(cam.view
+		glm::vec3 direction = glm::normalize(cam.view
 			- cam.right * cam.pixelLength.x * (u - (float)cam.resolution.x * 0.5f)
 			- cam.up * cam.pixelLength.y * (v - (float)cam.resolution.y * 0.5f)
 		);
+
+#if DOF
+		// Calculate the point on the focal plane
+		glm::vec3 focalPoint = cam.position + dof.focalLength * direction;
+
+		// Generate a random point on the lens for depth of field
+		float r = sqrt(u01(rng)) * dof.aperture;
+		float theta = u01(rng) * 2 * PI;
+		glm::vec3 offset = r * (cos(theta) * cam.right + sin(theta) * cam.up);
+
+		// Set the ray origin to the offset camera position
+		segment.ray.origin = cam.position + offset;
+
+		// Set the ray direction to point from the offset origin through the focal point
+		segment.ray.direction = glm::normalize(focalPoint - segment.ray.origin);
+#else
+		// Standard ray generation without depth of field
+		segment.ray.origin = cam.position;
+		segment.ray.direction = direction;
+#endif
 
 		segment.pixelIndex = index;
 		segment.remainingBounces = traceDepth;
@@ -469,7 +500,16 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 
 	// TODO: perform one iteration of path tracing
 
-	generateRayFromCamera << <blocksPerGrid2d, blockSize2d >> > (cam, iter, traceDepth, dev_paths);
+	DepthOfFieldParams dofParams;
+	dofParams.focalLength = 10.0f; // Adjust as needed
+	dofParams.aperture = 1.0f;     // Adjust as needed
+
+	generateRayFromCamera << <blocksPerGrid2d, blockSize2d >> > (
+		cam, iter, traceDepth, dev_paths
+#if DOF
+		, dofParams
+#endif
+		);
 	checkCUDAError("generate camera ray");
 
 	int depth = 0;
