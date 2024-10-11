@@ -31,7 +31,6 @@
 #define CACHE_FIRST_BOUNCE 0  // You can manually change this to 1 when needed
 #endif
 
-#define DOF 0
 
 
 

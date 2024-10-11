@@ -70,6 +70,9 @@ void JSONSceneLoader::loadCamera(const json& camera, Scene* scene) {
     cam.lookAt = glm::vec3(camera["lookAt"][0], camera["lookAt"][1], camera["lookAt"][2]);
     cam.up = glm::vec3(camera["up"][0], camera["up"][1], camera["up"][2]);
 
+    cam.focalLength = camera["focalLength"];
+    cam.aperture = camera["aperture"];
+
     // Calculate FOV and other camera properties
     float yscaled = tan(fovy * (PI / 180));
     float xscaled = (yscaled * cam.resolution.x) / cam.resolution.y;
