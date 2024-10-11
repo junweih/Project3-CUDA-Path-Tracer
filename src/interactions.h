@@ -62,6 +62,37 @@ glm::vec3 sampleSpecularRefl(const Material& m, glm::vec3 nor,
 }
 
 
+__host__ __device__
+glm::vec3 sampleRefraction(const Material& m, glm::vec3 nor,
+    glm::vec3 wo, glm::vec3& wi, float& pdf) {
+    float cosThetaI = glm::dot(wo, nor);
+    float etaI = 1.0f; // Assuming air as the external medium
+    float etaT = m.indexOfRefraction;
+
+    // Ensure etaT is valid
+    etaT = glm::max(etaT, 1.0f);
+
+    bool entering = cosThetaI < 0.0f;
+    nor = entering ? nor : -nor;
+    cosThetaI = glm::abs(cosThetaI);
+
+    float eta = entering ? etaI / etaT : etaT / etaI;
+
+    // Use glm::refract for robust refraction calculation
+    wi = glm::refract(-wo, nor, eta);
+
+    // Check for total internal reflection
+    if (glm::length(wi) < EPSILON) {
+        // Total internal reflection
+        wi = glm::reflect(-wo, nor);
+    }
+
+    pdf = 1.0f;
+
+    // Simplify the BSDF calculation
+    return m.specular.color;
+}
+
 /**
  * Scatter a ray with some probabilities according to the material properties.
  * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
@@ -109,9 +140,12 @@ void scatterRay(
     float offset = OFFSET;
     float absDot = 1.f, pdf = 1.f;
 
-
     if (m.hasReflective) {
         bsdf = sampleSpecularRefl(m, normal, wo, wi);
+    }
+    else if (m.hasRefractive)
+    {
+        bsdf = sampleRefraction(m, normal, wo, wi, pdf);
     }
 
     else { // default to lambert diffuse
