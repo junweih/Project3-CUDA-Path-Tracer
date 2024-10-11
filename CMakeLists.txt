@@ -61,7 +61,7 @@ endif(UNIX)
 set(GLM_ROOT_DIR "external")
 find_package(GLM REQUIRED)
 include_directories(${GLM_INCLUDE_DIRS})
-include_directories("C:/dev/vcpkg-master/buildtrees/nlohmann-json/src/v3.11.3-434e7fbc3e.clean/single_include")
+include_directories("./packages/nlohmann-json/src/v3.11.3-434e7fbc3e.clean/single_include")
 
 set(headers
     src/main.h
