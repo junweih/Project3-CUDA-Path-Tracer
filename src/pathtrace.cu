@@ -500,9 +500,13 @@ void pathtrace(uchar4* pbo, int frame, int iter) {
 
 	// TODO: perform one iteration of path tracing
 
+#if DOF
 	DepthOfFieldParams dofParams;
 	dofParams.focalLength = 10.0f; // Adjust as needed
 	dofParams.aperture = 1.0f;     // Adjust as needed
+#endif // DOF
+
+
 
 	generateRayFromCamera << <blocksPerGrid2d, blockSize2d >> > (
 		cam, iter, traceDepth, dev_paths

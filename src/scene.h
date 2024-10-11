@@ -18,6 +18,7 @@ private:
     int loadCamera();
 public:
     Scene(string filename);
+    Scene() = default;
     ~Scene();
 
     std::vector<Geom> geoms;

@@ -2,6 +2,7 @@
 #include "preview.h"
 #include <cstring>
 #include <direct.h>
+#include "jsonSceneLoader.h"
 
 static std::string startTimeString;
 
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
 	const char* sceneFile = argv[1];
 
 	// Load scene file
-	scene = new Scene(sceneFile);
+	scene = JSONSceneLoader::loadScene(sceneFile);
 
 	//Create Instance for ImGUIData
 	guiData = new GuiDataContainer();
