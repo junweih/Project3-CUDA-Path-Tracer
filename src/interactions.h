@@ -93,6 +93,118 @@ glm::vec3 sampleRefraction(const Material& m, glm::vec3 nor,
     return m.specular.color;
 }
 
+__host__ __device__
+float FresnelDielectric(const float& etaI,
+    const float& etaO,
+    const float& cosThetaI,
+    const float& cosThetaO)
+{
+    float Rparl = ((etaO * cosThetaI) - (etaI * cosThetaO)) / ((etaO * cosThetaI) + (etaI * cosThetaO));
+    float Rperp = ((etaI * cosThetaI) - (etaO * cosThetaO)) / ((etaI * cosThetaI) + (etaO * cosThetaO));
+
+    return (Rparl * Rparl + Rperp * Rperp) / 2.f;
+}
+
+__host__ __device__
+float fresnelDielectricEval(const Material& m, float cosThetaI) {
+    float etaI = 1.f;
+    float etaT = m.indexOfRefraction;
+    etaT = etaT < EPSILON ? 1.55f : etaT;
+    cosThetaI = glm::clamp(cosThetaI, -1.f, 1.f);
+
+    // see pbrt FrDielectric()
+    // Potentially swap indices of refraction
+    if (cosThetaI > 0.f) {
+        float temp = etaI;
+        etaI = etaT;
+        etaT = temp;
+    }
+    cosThetaI = glm::abs(cosThetaI);
+
+    // Computer cosThetaT using Snell's law
+    float sinThetaI = glm::sqrt(glm::max(0.f,
+        1.f - cosThetaI * cosThetaI));
+    float sinThetaT = etaI / etaT * sinThetaI;
+
+    // Handle total internal reflection
+    if (sinThetaT >= 0.999f) {
+        return 1.f;
+    }
+
+    // Compute Fresnel reflectance using light polarization eqns, see PBRT 8.2.1
+    float cosThetaT = glm::sqrt(glm::max(0.f,
+        1.f - sinThetaT * sinThetaT));
+    float Rparl = ((etaT * cosThetaI) - (etaI * cosThetaT)) /
+        ((etaT * cosThetaI) + (etaI * cosThetaT));
+    float Rperp = ((etaI * cosThetaI) - (etaT * cosThetaT)) /
+        ((etaI * cosThetaI) + (etaT * cosThetaT));
+
+    return (Rparl * Rparl + Rperp * Rperp) * 0.5f; // coefficient
+}
+
+__host__ __device__
+glm::vec3 sampleGlass(const Material& m, glm::vec3 nor,
+    thrust::default_random_engine& rng, glm::vec3 wo, glm::vec3& wi,
+    float& absDot, float& pdf) {
+
+    thrust::uniform_real_distribution<float> u01(0, 1);
+    bool random = u01(rng);
+
+    float fresnel = fresnelDielectricEval(m, glm::dot(wo, nor));
+    glm::vec3 bsdf(0.f);
+    //if (random < fresnel) {
+    //    // Have to double contribution b/c we only sample
+    //    // reflection BxDF half the time
+    //    bsdf = sampleSpecularRefl(m, nor, wo, wi);
+    //    return bsdf;
+    //}
+    //else {
+    //    bsdf = sampleSpecularTrans(m, nor, wo, wi);
+    //    return bsdf; // 1-fr b/c all conditions sum up to 1
+    //}
+    // spec glass
+    float eta = m.indexOfRefraction;
+    if (u01(rng) < 0.5f) {
+        // specular reflection
+        wi = glm::reflect(wo, nor);
+        absDot = glm::abs(glm::dot(nor, wi));
+        pdf = 1.0f;
+        if (absDot == 0.0f) {
+            bsdf = m.color;
+        }
+        else {
+            bsdf = m.color / absDot;
+        }
+        bsdf *= fresnel;
+    }
+    else {
+        // specular refraction
+        if (glm::dot(nor, wo) < 0.0f) {
+            // outside
+            eta = 1.0f / eta;
+            wi = glm::refract(wo, nor, eta);
+        }
+        else {
+            // inside
+            wi = glm::refract(wo, -nor, eta);
+        }
+        absDot = glm::abs(glm::dot(nor, wi));
+        pdf = 1.0f;
+        if (glm::length(wi) <= 0.0001f) {
+            // total internal reflection
+            bsdf = glm::vec3(0.0f);
+        }
+        if (absDot == 0.0f) {
+            bsdf = m.specular.color;
+        }
+        else {
+            bsdf = m.specular.color / absDot;
+        }
+        bsdf *= (1.0f - fresnel);
+    }
+    return bsdf * 2.0f;
+}
+
 /**
  * Scatter a ray with some probabilities according to the material properties.
  * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
@@ -139,8 +251,13 @@ void scatterRay(
     glm::vec3 bsdf(0.0f);
     float offset = OFFSET;
     float absDot = 1.f, pdf = 1.f;
+    bool manualCalc = false;
 
-    if (m.hasReflective) {
+    if (m.hasReflective && m.hasRefractive) { // Glass material
+        bsdf = sampleGlass(m, normal, rng, wo, wi, absDot, pdf);
+        manualCalc = true;
+    }
+    else if (m.hasReflective) {
         bsdf = sampleSpecularRefl(m, normal, wo, wi);
     }
     else if (m.hasRefractive)
@@ -153,7 +270,7 @@ void scatterRay(
         offset = 0.f;
     }
 
-    pathSegment.throughput *= bsdf * absDot / pdf;
+    pathSegment.throughput *= manualCalc ? (bsdf * absDot / pdf) : bsdf;
     pathSegment.ray.direction = glm::normalize(wi);
     pathSegment.ray.origin = intersect + offset * pathSegment.ray.direction;
     pathSegment.remainingBounces--;
