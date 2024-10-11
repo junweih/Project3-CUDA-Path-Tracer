@@ -251,11 +251,9 @@ void scatterRay(
     glm::vec3 bsdf(0.0f);
     float offset = OFFSET;
     float absDot = 1.f, pdf = 1.f;
-    bool manualCalc = false;
 
     if (m.hasReflective && m.hasRefractive) { // Glass material
         bsdf = sampleGlass(m, normal, rng, wo, wi, absDot, pdf);
-        manualCalc = true;
     }
     else if (m.hasReflective) {
         bsdf = sampleSpecularRefl(m, normal, wo, wi);
@@ -270,7 +268,7 @@ void scatterRay(
         offset = 0.f;
     }
 
-    pathSegment.throughput *= manualCalc ? (bsdf * absDot / pdf) : bsdf;
+    pathSegment.throughput *= bsdf * absDot / pdf;
     pathSegment.ray.direction = glm::normalize(wi);
     pathSegment.ray.origin = intersect + offset * pathSegment.ray.direction;
     pathSegment.remainingBounces--;
