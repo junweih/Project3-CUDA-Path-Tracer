@@ -72,6 +72,7 @@ void JSONSceneLoader::loadCamera(const json& camera, Scene* scene) {
 
     cam.focalLength = camera["focalLength"];
     cam.aperture = camera["aperture"];
+    cam.dofEnabled = camera["dofEnabled"];
 
     // Calculate FOV and other camera properties
     float yscaled = tan(fovy * (PI / 180));

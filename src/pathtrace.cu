@@ -196,19 +196,27 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 			- cam.up * cam.pixelLength.y * (v - (float)cam.resolution.y * 0.5f)
 		);
 
-		// Calculate the point on the focal plane
-		glm::vec3 focalPoint = cam.position + cam.focalLength * direction;
+		if (cam.dofEnabled) {
+			// Calculate the point on the focal plane
+			glm::vec3 focalPoint = cam.position + cam.focalLength * direction;
 
-		// Generate a random point on the lens for depth of field
-		float r = sqrt(u01(rng)) * cam.aperture;
-		float theta = u01(rng) * 2 * PI;
-		glm::vec3 offset = r * (cos(theta) * cam.right + sin(theta) * cam.up);
+			// Generate a random point on the lens for depth of field
+			float r = sqrt(u01(rng)) * cam.aperture;
+			float theta = u01(rng) * 2 * PI;
+			glm::vec3 offset = r * (cos(theta) * cam.right + sin(theta) * cam.up);
 
-		// Set the ray origin to the offset camera position
-		segment.ray.origin = cam.position + offset;
+			// Set the ray origin to the offset camera position
+			segment.ray.origin = cam.position + offset;
 
-		// Set the ray direction to point from the offset origin through the focal point
-		segment.ray.direction = glm::normalize(focalPoint - segment.ray.origin);
+			// Set the ray direction to point from the offset origin through the focal point
+			segment.ray.direction = glm::normalize(focalPoint - segment.ray.origin);
+		}
+		else {
+			// Standard ray generation without depth of field
+			segment.ray.origin = cam.position;
+			segment.ray.direction = direction;
+		}
+
 
 		segment.pixelIndex = index;
 		segment.remainingBounces = traceDepth;

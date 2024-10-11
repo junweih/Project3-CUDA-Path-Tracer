@@ -52,6 +52,7 @@ struct Camera {
     glm::vec2 pixelLength;
     float focalLength;
     float aperture;
+    bool dofEnabled;
 };
 
 struct RenderState {
