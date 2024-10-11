@@ -18,8 +18,19 @@
 
 #define COMPACT 1
 #define SORT_BY_MATERIAL 0
-#define CACHE_FIRST_BOUNCE 1
+
 #define AA 1
+#define SSAA 0
+#define AA_SAMPLES 16  // Number of samples per pixel for SSAA
+
+// Logic to control CACHE_FIRST_BOUNCE based on SSAA and AA
+#if SSAA || AA
+#define CACHE_FIRST_BOUNCE 0
+#else
+    // When both SSAA and AA are 0, keep the manual setting
+#define CACHE_FIRST_BOUNCE 0  // You can manually change this to 1 when needed
+#endif
+
 
 class GuiDataContainer
 {

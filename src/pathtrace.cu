@@ -126,6 +126,22 @@ void pathtraceFree() {
 }
 
 #pragma region Kernel
+// Add this structure to store AA sample offsets
+struct AAJitter {
+	float x, y;
+};
+
+// generate SSAA sample offsets
+__device__ void generateAAOffsets(AAJitter* offsets, int numSamples) {
+	for (int i = 0; i < numSamples; ++i) {
+		float angle = 2.0f * PI * i / numSamples;
+		float radius = sqrtf((i + 0.5f) / numSamples);
+		offsets[i].x = radius * cosf(angle) * 0.5f + 0.5f;
+		offsets[i].y = radius * sinf(angle) * 0.5f + 0.5f;
+	}
+}
+
+
 /**
 * Generate PathSegments with rays from the camera through the screen into the
 * scene, which is the first bounce of rays.
@@ -150,10 +166,24 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 		float u = (float)x;
 		float v = (float)y;
 
-#if AA
-		// Use a simple jittering method for anti-aliasing
 		thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
 		thrust::uniform_real_distribution<float> u01(0, 1);
+#if SSAA
+		// Stochastic Sampled Anti-Aliasing
+		AAJitter aaOffsets[AA_SAMPLES];
+		generateAAOffsets(aaOffsets, AA_SAMPLES);
+
+		int sampleIndex = iter % AA_SAMPLES;
+
+		u += aaOffsets[sampleIndex].x;
+		v += aaOffsets[sampleIndex].y;
+
+		// Add a small random jitter for additional noise reduction
+		u += u01(rng) * 0.1f;
+		v += u01(rng) * 0.1f;
+#elif AA
+		// Use a simple jittering method for anti-aliasing
+
 		u += u01(rng);
 		v += u01(rng);
 #else
