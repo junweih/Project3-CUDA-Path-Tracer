@@ -75,7 +75,6 @@ set(headers
     src/preview.h
     src/utilities.h
     src/ImGui/imconfig.h
-    src/jsonSceneLoader.h
 	
 	src/ImGui/imgui.h
     src/ImGui/imconfig.h
@@ -99,7 +98,6 @@ set(sources
     src/scene.cpp
     src/preview.cpp
     src/utilities.cpp
-    src/jsonSceneLoader.cpp
 	
     src/ImGui/imgui.cpp 
       src/ImGui/imgui_demo.cpp 

@@ -1,193 +1,262 @@
 #include <iostream>
 #include "scene.h"
-#include <cstring>
+#include <fstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtx/string_cast.hpp>
+#include <algorithm>
 
-Scene::Scene(string filename) {
-    cout << "Reading scene from " << filename << " ..." << endl;
-    cout << " " << endl;
-    char* fname = (char*)filename.c_str();
-    fp_in.open(fname);
-    if (!fp_in.is_open()) {
-        cout << "Error reading from file - aborting!" << endl;
-        throw;
+#define STBI_MSC_SECURE_CRT
+#define TINYGLTF_IMPLEMENTATION
+#include "tiny_gltf.h"
+
+Scene::Scene() {}
+
+Scene::Scene(const std::string& filename) {
+    loadFromFile(filename);
+}
+
+void Scene::loadFromFile(const std::string& filename) {
+    std::cout << "Reading scene from " << filename << "..." << std::endl;
+
+    std::string ext = filename.substr(filename.find_last_of(".") + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    if (ext == "gltf") {
+        loadGLTF(filename);
     }
-    while (fp_in.good()) {
-        string line;
-        utilityCore::safeGetline(fp_in, line);
-        if (!line.empty()) {
-            vector<string> tokens = utilityCore::tokenizeString(line);
-            if (strcmp(tokens[0].c_str(), "MATERIAL") == 0) {
-                loadMaterial(tokens[1]);
-                cout << " " << endl;
-            } else if (strcmp(tokens[0].c_str(), "OBJECT") == 0) {
-                loadGeom(tokens[1]);
-                cout << " " << endl;
-            } else if (strcmp(tokens[0].c_str(), "CAMERA") == 0) {
-                loadCamera();
-                cout << " " << endl;
-            }
-        }
+    else if (ext == "json") {
+        loadJSON(filename);
+    }
+    else {
+        throw std::runtime_error("Unsupported file format: " + ext);
     }
 }
 
-int Scene::loadGeom(string objectid) {
-    int id = atoi(objectid.c_str());
-    if (id != geoms.size()) {
-        cout << "ERROR: OBJECT ID does not match expected number of geoms" << endl;
-        return -1;
-    } else {
-        cout << "Loading Geom " << id << "..." << endl;
+void Scene::loadJSON(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filename);
+    }
+
+    json sceneData;
+    file >> sceneData;
+
+    loadMaterials(sceneData["materials"]);
+    loadGeoms(sceneData["objects"]);
+    loadCamera(sceneData["camera"]);
+}
+
+void Scene::loadMaterials(const json& jsonMaterials) {
+    for (const auto& material : jsonMaterials) {
+        Material newMaterial;
+        newMaterial.color = glm::vec3(
+            material["color"][0],
+            material["color"][1],
+            material["color"][2]
+        );
+        newMaterial.specular.exponent = material["specular"]["exponent"];
+        newMaterial.specular.color = glm::vec3(
+            material["specular"]["color"][0],
+            material["specular"]["color"][1],
+            material["specular"]["color"][2]
+        );
+        newMaterial.hasReflective = material["reflective"];
+        newMaterial.hasRefractive = material["refractive"];
+        newMaterial.indexOfRefraction = material["indexOfRefraction"];
+        newMaterial.emittance = material["emittance"];
+        newMaterial.hasTransmission = material["transmission"];
+
+        materials.push_back(newMaterial);
+    }
+}
+
+void Scene::loadGeoms(const json& objects) {
+    for (const auto& object : objects) {
         Geom newGeom;
-        string line;
+        newGeom.type = object["type"] == "sphere" ? SPHERE : CUBE;
+        newGeom.materialid = object["materialId"];
 
-        //load object type
-        utilityCore::safeGetline(fp_in, line);
-        if (!line.empty() && fp_in.good()) {
-            if (strcmp(line.c_str(), "sphere") == 0) {
-                cout << "Creating new sphere..." << endl;
-                newGeom.type = SPHERE;
-            } else if (strcmp(line.c_str(), "cube") == 0) {
-                cout << "Creating new cube..." << endl;
-                newGeom.type = CUBE;
-            }
-        }
-
-        //link material
-        utilityCore::safeGetline(fp_in, line);
-        if (!line.empty() && fp_in.good()) {
-            vector<string> tokens = utilityCore::tokenizeString(line);
-            newGeom.materialid = atoi(tokens[1].c_str());
-            cout << "Connecting Geom " << objectid << " to Material " << newGeom.materialid << "..." << endl;
-        }
-
-        //load transformations
-        utilityCore::safeGetline(fp_in, line);
-        while (!line.empty() && fp_in.good()) {
-            vector<string> tokens = utilityCore::tokenizeString(line);
-
-            //load tranformations
-            if (strcmp(tokens[0].c_str(), "TRANS") == 0) {
-                newGeom.translation = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-            } else if (strcmp(tokens[0].c_str(), "ROTAT") == 0) {
-                newGeom.rotation = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-            } else if (strcmp(tokens[0].c_str(), "SCALE") == 0) {
-                newGeom.scale = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-            }
-
-            utilityCore::safeGetline(fp_in, line);
-        }
+        newGeom.translation = glm::vec3(
+            object["translation"][0],
+            object["translation"][1],
+            object["translation"][2]
+        );
+        newGeom.rotation = glm::vec3(
+            object["rotation"][0],
+            object["rotation"][1],
+            object["rotation"][2]
+        );
+        newGeom.scale = glm::vec3(
+            object["scale"][0],
+            object["scale"][1],
+            object["scale"][2]
+        );
 
         newGeom.transform = utilityCore::buildTransformationMatrix(
-                newGeom.translation, newGeom.rotation, newGeom.scale);
+            newGeom.translation, newGeom.rotation, newGeom.scale);
         newGeom.inverseTransform = glm::inverse(newGeom.transform);
         newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
 
         geoms.push_back(newGeom);
-        return 1;
     }
 }
 
-int Scene::loadCamera() {
-    cout << "Loading Camera ..." << endl;
-    RenderState &state = this->state;
-    Camera &camera = state.camera;
-    float fovy;
+void Scene::loadCamera(const json& camera) {
+    RenderState& state = this->state;
+    Camera& cam = state.camera;
 
-    //load static properties
-    for (int i = 0; i < 5; i++) {
-        string line;
-        utilityCore::safeGetline(fp_in, line);
-        vector<string> tokens = utilityCore::tokenizeString(line);
-        if (strcmp(tokens[0].c_str(), "RES") == 0) {
-            camera.resolution.x = atoi(tokens[1].c_str());
-            camera.resolution.y = atoi(tokens[2].c_str());
-        } else if (strcmp(tokens[0].c_str(), "FOVY") == 0) {
-            fovy = atof(tokens[1].c_str());
-        } else if (strcmp(tokens[0].c_str(), "ITERATIONS") == 0) {
-            state.iterations = atoi(tokens[1].c_str());
-        } else if (strcmp(tokens[0].c_str(), "DEPTH") == 0) {
-            state.traceDepth = atoi(tokens[1].c_str());
-        } else if (strcmp(tokens[0].c_str(), "FILE") == 0) {
-            state.imageName = tokens[1];
-        }
-    }
+    cam.resolution.x = camera["resolution"][0];
+    cam.resolution.y = camera["resolution"][1];
+    float fovy = camera["fovy"];
+    state.iterations = camera["iterations"];
+    state.traceDepth = camera["depth"];
+    state.imageName = camera["outputFile"].get<std::string>();
 
-    string line;
-    utilityCore::safeGetline(fp_in, line);
-    while (!line.empty() && fp_in.good()) {
-        vector<string> tokens = utilityCore::tokenizeString(line);
-        if (strcmp(tokens[0].c_str(), "EYE") == 0) {
-            camera.position = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-        } else if (strcmp(tokens[0].c_str(), "LOOKAT") == 0) {
-            camera.lookAt = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-        } else if (strcmp(tokens[0].c_str(), "UP") == 0) {
-            camera.up = glm::vec3(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-        }
+    cam.position = glm::vec3(
+        camera["eye"][0],
+        camera["eye"][1],
+        camera["eye"][2]
+    );
+    cam.lookAt = glm::vec3(
+        camera["lookAt"][0],
+        camera["lookAt"][1],
+        camera["lookAt"][2]
+    );
+    cam.up = glm::vec3(
+        camera["up"][0],
+        camera["up"][1],
+        camera["up"][2]
+    );
 
-        utilityCore::safeGetline(fp_in, line);
-    }
+    cam.focalLength = camera["focalLength"];
+    cam.aperture = camera["aperture"];
+    cam.dofEnabled = camera["dofEnabled"];
 
-    //calculate fov based on resolution
+    // Calculate FOV and other camera properties
     float yscaled = tan(fovy * (PI / 180));
-    float xscaled = (yscaled * camera.resolution.x) / camera.resolution.y;
+    float xscaled = (yscaled * cam.resolution.x) / cam.resolution.y;
     float fovx = (atan(xscaled) * 180) / PI;
-    camera.fov = glm::vec2(fovx, fovy);
+    cam.fov = glm::vec2(fovx, fovy);
 
-    camera.right = glm::normalize(glm::cross(camera.view, camera.up));
-    camera.pixelLength = glm::vec2(2 * xscaled / (float)camera.resolution.x,
-                                   2 * yscaled / (float)camera.resolution.y);
+    cam.view = glm::normalize(cam.lookAt - cam.position);
+    cam.right = glm::normalize(glm::cross(cam.view, cam.up));
+    cam.pixelLength = glm::vec2(
+        2 * xscaled / (float)cam.resolution.x,
+        2 * yscaled / (float)cam.resolution.y
+    );
 
-    camera.view = glm::normalize(camera.lookAt - camera.position);
-
-    //set up render camera stuff
-    int arraylen = camera.resolution.x * camera.resolution.y;
+    // Initialize image buffer
+    int arraylen = cam.resolution.x * cam.resolution.y;
     state.image.resize(arraylen);
     std::fill(state.image.begin(), state.image.end(), glm::vec3());
-
-    cout << "Loaded camera!" << endl;
-    return 1;
 }
 
-int Scene::loadMaterial(string materialid) {
-    int id = atoi(materialid.c_str());
-    if (id != materials.size()) {
-        cout << "ERROR: MATERIAL ID does not match expected number of materials" << endl;
-        return -1;
-    } else {
-        cout << "Loading Material " << id << "..." << endl;
+void Scene::loadGLTF(const std::string& filename) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, filename);
+
+    if (!warn.empty()) {
+        std::cout << "GLTF Warning: " << warn << std::endl;
+    }
+    if (!err.empty()) {
+        std::cerr << "GLTF Error: " << err << std::endl;
+        return;
+    }
+    if (!ret) {
+        throw std::runtime_error("Failed to load GLTF file: " + filename);
+    }
+
+    // Load Materials
+    for (const auto& material : model.materials) {
         Material newMaterial;
 
-        // ------------------------------------------------------------------------
-        // REMEMBER to change i in the loop if adding new properties!!!!!!
-        // ------------------------------------------------------------------------
-        //load static properties
-        for (int i = 0; i < 8; i++) {
-            string line;
-            utilityCore::safeGetline(fp_in, line);
-            vector<string> tokens = utilityCore::tokenizeString(line);
-            if (strcmp(tokens[0].c_str(), "RGB") == 0) {
-                glm::vec3 color( atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()) );
-                newMaterial.color = color;
-            } else if (strcmp(tokens[0].c_str(), "SPECEX") == 0) {
-                newMaterial.specular.exponent = atof(tokens[1].c_str());
-            } else if (strcmp(tokens[0].c_str(), "SPECRGB") == 0) {
-                glm::vec3 specColor(atof(tokens[1].c_str()), atof(tokens[2].c_str()), atof(tokens[3].c_str()));
-                newMaterial.specular.color = specColor;
-            } else if (strcmp(tokens[0].c_str(), "REFL") == 0) {
-                newMaterial.hasReflective = atof(tokens[1].c_str());
-            } else if (strcmp(tokens[0].c_str(), "REFR") == 0) {
-                newMaterial.hasRefractive = atof(tokens[1].c_str());
-            } else if (strcmp(tokens[0].c_str(), "REFRIOR") == 0) {
-                newMaterial.indexOfRefraction = atof(tokens[1].c_str());
-            } else if (strcmp(tokens[0].c_str(), "EMITTANCE") == 0) {
-                newMaterial.emittance = atof(tokens[1].c_str());
-            } else if (strcmp(tokens[0].c_str(), "TRANS") == 0) {
-                newMaterial.hasTransmission = atof(tokens[1].c_str());
-            }
+        if (material.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
+            newMaterial.color = glm::vec3(
+                material.pbrMetallicRoughness.baseColorFactor[0],
+                material.pbrMetallicRoughness.baseColorFactor[1],
+                material.pbrMetallicRoughness.baseColorFactor[2]
+            );
         }
+
+        float roughness = material.pbrMetallicRoughness.roughnessFactor;
+        float metallic = material.pbrMetallicRoughness.metallicFactor;
+
+        newMaterial.specular.exponent = (1.0f - roughness) * 100.0f;
+        newMaterial.specular.color = glm::vec3(1.0f);
+        newMaterial.hasReflective = metallic > 0.5f;
+        newMaterial.hasRefractive = false;
+        newMaterial.indexOfRefraction = 1.0f;
+        newMaterial.emittance = 0.0f;
+        newMaterial.hasTransmission = false;
+
         materials.push_back(newMaterial);
-        return 1;
     }
+
+    // Load Meshes
+    for (const auto& mesh : model.meshes) {
+        for (const auto& primitive : mesh.primitives) {
+            const tinygltf::Accessor& posAccessor =
+                model.accessors[primitive.attributes.find("POSITION")->second];
+
+            Geom newGeom;
+            newGeom.type = CUBE;  // Using cube as base primitive
+            newGeom.materialid = primitive.material;
+
+            // Calculate bounding box
+            glm::vec3 min(
+                posAccessor.minValues[0],
+                posAccessor.minValues[1],
+                posAccessor.minValues[2]
+            );
+            glm::vec3 max(
+                posAccessor.maxValues[0],
+                posAccessor.maxValues[1],
+                posAccessor.maxValues[2]
+            );
+
+            glm::vec3 center = (min + max) * 0.5f;
+            glm::vec3 scale = (max - min) * 0.5f;
+
+            newGeom.translation = center;
+            newGeom.rotation = glm::vec3(0.0f);
+            newGeom.scale = scale;
+
+            newGeom.transform = utilityCore::buildTransformationMatrix(
+                newGeom.translation, newGeom.rotation, newGeom.scale);
+            newGeom.inverseTransform = glm::inverse(newGeom.transform);
+            newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
+
+            geoms.push_back(newGeom);
+        }
+    }
+
+    // Set up default camera if none specified
+    if (model.cameras.empty()) {
+        setupDefaultCamera();
+    }
+}
+
+void Scene::setupDefaultCamera() {
+    Camera& cam = state.camera;
+
+    cam.resolution = glm::vec2(800, 600);
+    cam.position = glm::vec3(0, 0, -10);
+    cam.lookAt = glm::vec3(0, 0, 0);
+    cam.up = glm::vec3(0, 1, 0);
+    cam.fov = glm::vec2(45.0f);
+
+    cam.view = glm::normalize(cam.lookAt - cam.position);
+    cam.right = glm::normalize(glm::cross(cam.view, cam.up));
+
+    state.iterations = 100;
+    state.traceDepth = 5;
+    state.imageName = "gltf_render.png";
+
+    // Initialize image buffer
+    int arraylen = cam.resolution.x * cam.resolution.y;
+    state.image.resize(arraylen);
+    std::fill(state.image.begin(), state.image.end(), glm::vec3());
 }
