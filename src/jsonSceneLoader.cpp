@@ -64,7 +64,7 @@ void JSONSceneLoader::loadCamera(const json& camera, Scene* scene) {
     float fovy = camera["fovy"];
     state.iterations = camera["iterations"];
     state.traceDepth = camera["depth"];
-    state.imageName = camera["outputFile"];
+    state.imageName = camera["outputFile"].get<std::string>();
 
     cam.position = glm::vec3(camera["eye"][0], camera["eye"][1], camera["eye"][2]);
     cam.lookAt = glm::vec3(camera["lookAt"][0], camera["lookAt"][1], camera["lookAt"][2]);
