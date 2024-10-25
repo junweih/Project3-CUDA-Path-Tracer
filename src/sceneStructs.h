@@ -10,6 +10,22 @@
 enum GeomType {
     SPHERE,
     CUBE,
+    GLTF_MESH  // New type for GLTF meshes
+};
+
+/**
+ * Triangle intersection structure to store mesh data
+ */
+struct Triangle {
+    glm::vec3 v0, v1, v2;    // Vertices
+    glm::vec3 n0, n1, n2;    // Vertex normals
+    glm::vec2 t0, t1, t2;    // Texture coordinates
+};
+
+// Add new struct for storing mesh data
+struct MeshData {
+    Triangle* dev_triangles;  // Device pointer to triangle array
+    int numTriangles;
 };
 
 struct Ray {
@@ -26,6 +42,9 @@ struct Geom {
     glm::mat4 transform;
     glm::mat4 inverseTransform;
     glm::mat4 invTranspose;
+
+    // Add mesh data pointer (only valid for GLTF_MESH type)
+    MeshData* meshData;
 };
 
 struct Material {

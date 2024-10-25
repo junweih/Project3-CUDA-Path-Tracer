@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
@@ -125,10 +125,10 @@ __host__ __device__ float sphereIntersectionTest(Geom sphere, Ray r,
     if (t1 < 0 && t2 < 0) {
         return -1;
     } else if (t1 > 0 && t2 > 0) {
-        t = min(t1, t2);
+        t = glm::min(t1, t2);
         outside = true;
     } else {
-        t = max(t1, t2);
+        t = glm::max(t1, t2);
         outside = false;
     }
 
@@ -142,3 +142,125 @@ __host__ __device__ float sphereIntersectionTest(Geom sphere, Ray r,
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+/**
+ * Tests ray intersection with a triangle using Möller–Trumbore algorithm
+ */
+__host__ __device__ float triangleIntersectionTest(
+    const Triangle& tri,
+    const Ray& r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    glm::vec2& texCoord,
+    bool& outside) {
+
+    // Edge vectors
+    glm::vec3 edge1 = tri.v1 - tri.v0;
+    glm::vec3 edge2 = tri.v2 - tri.v0;
+
+    // Calculate determinant
+    glm::vec3 h = glm::cross(r.direction, edge2);
+    float det = glm::dot(edge1, h);
+
+    // Check if ray is parallel to triangle
+    if (det > -EPSILON && det < EPSILON) return -1.0f;
+
+    float invDet = 1.0f / det;
+
+    // Calculate u parameter
+    glm::vec3 s = r.origin - tri.v0;
+    float u = invDet * glm::dot(s, h);
+
+    // Check if intersection is outside triangle
+    if (u < 0.0f || u > 1.0f) return -1.0f;
+
+    // Calculate v parameter
+    glm::vec3 q = glm::cross(s, edge1);
+    float v = invDet * glm::dot(r.direction, q);
+
+    // Check if intersection is outside triangle
+    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+
+    // Calculate t
+    float t = invDet * glm::dot(edge2, q);
+
+    // Check if intersection is behind ray origin
+    if (t <= EPSILON) return -1.0f;
+
+    // Compute intersection point
+    intersectionPoint = getPointOnRay(r, t);
+
+    // Interpolate normal using barycentric coordinates
+    float w = 1.0f - u - v;
+    normal = glm::normalize(w * tri.n0 + u * tri.n1 + v * tri.n2);
+
+    // Interpolate texture coordinates
+    texCoord = w * tri.t0 + u * tri.t1 + v * tri.t2;
+
+    // Ray always hits triangle from outside
+    outside = true;
+
+    return t;
+}
+
+/**
+ * Tests intersection with a transformed triangle mesh
+ */
+__host__ __device__ float meshIntersectionTest(
+    const Triangle* triangles,
+    const int numTriangles,
+    const Geom& mesh,
+    const Ray& r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    glm::vec2& texCoord,
+    bool& outside) {
+
+    // Transform ray to object space
+    Ray localRay;
+    localRay.origin = multiplyMV(mesh.inverseTransform, glm::vec4(r.origin, 1.0f));
+    localRay.direction = glm::normalize(multiplyMV(mesh.inverseTransform, glm::vec4(r.direction, 0.0f)));
+
+    float closest_t = FLT_MAX;
+    glm::vec3 temp_point, temp_normal;
+    glm::vec2 temp_texcoord;
+    bool temp_outside;
+
+    // Test intersection with all triangles
+    for (int i = 0; i < numTriangles; i++) {
+        float t = triangleIntersectionTest(
+            triangles[i],
+            localRay,
+            temp_point,
+            temp_normal,
+            temp_texcoord,
+            temp_outside
+        );
+
+        if (t > 0.0f && t < closest_t) {
+            closest_t = t;
+
+            // Transform intersection point back to world space
+            intersectionPoint = multiplyMV(mesh.transform, glm::vec4(temp_point, 1.0f));
+
+            // Transform normal back to world space
+            normal = glm::normalize(multiplyMV(mesh.invTranspose, glm::vec4(temp_normal, 0.0f)));
+
+            texCoord = temp_texcoord;
+            outside = temp_outside;
+        }
+    }
+
+    if (closest_t == FLT_MAX) return -1.0f;
+
+    return glm::length(r.origin - intersectionPoint);
+}
+
+/**
+ * Structure to store GLTF mesh data
+ */
+struct GltfMesh {
+    Triangle* triangles;      // Array of triangles
+    int numTriangles;        // Number of triangles in the mesh
+    Material material;       // Material for the mesh
+};
