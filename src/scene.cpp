@@ -152,6 +152,8 @@ void Scene::loadCamera(const json& camera) {
 }
 
 void Scene::loadGLTF(const std::string& filename) {
+    std::cout << "\n=== Loading GLTF Scene: " << filename << " ===\n" << std::endl;
+
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
     std::string err, warn;
@@ -169,9 +171,25 @@ void Scene::loadGLTF(const std::string& filename) {
         throw std::runtime_error("Failed to load GLTF file: " + filename);
     }
 
+    // Print scene information
+    std::cout << "Scene Information:" << std::endl;
+    std::cout << "- Scenes: " << model.scenes.size() << std::endl;
+    std::cout << "- Nodes: " << model.nodes.size() << std::endl;
+    std::cout << "- Meshes: " << model.meshes.size() << std::endl;
+    std::cout << "- Materials: " << model.materials.size() << std::endl;
+    std::cout << "- Textures: " << model.textures.size() << std::endl;
+    std::cout << "- Images: " << model.images.size() << std::endl;
+    std::cout << "- Cameras: " << model.cameras.size() << std::endl;
+    std::cout << "- Lights: " << model.lights.size() << std::endl;
+    std::cout << std::endl;
+
     // Load Materials
-    for (const auto& material : model.materials) {
+    std::cout << "Loading Materials..." << std::endl;
+    for (size_t i = 0; i < model.materials.size(); i++) {
+        const auto& material = model.materials[i];
         Material newMaterial;
+
+        std::cout << "Material " << i << ": " << (material.name.empty() ? "unnamed" : material.name) << std::endl;
 
         if (material.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
             newMaterial.color = glm::vec3(
@@ -179,6 +197,10 @@ void Scene::loadGLTF(const std::string& filename) {
                 material.pbrMetallicRoughness.baseColorFactor[1],
                 material.pbrMetallicRoughness.baseColorFactor[2]
             );
+            std::cout << "  - Base Color: ("
+                << newMaterial.color.x << ", "
+                << newMaterial.color.y << ", "
+                << newMaterial.color.z << ")" << std::endl;
         }
 
         float roughness = material.pbrMetallicRoughness.roughnessFactor;
@@ -192,14 +214,39 @@ void Scene::loadGLTF(const std::string& filename) {
         newMaterial.emittance = 0.0f;
         newMaterial.hasTransmission = false;
 
+        std::cout << "  - Roughness: " << roughness << std::endl;
+        std::cout << "  - Metallic: " << metallic << std::endl;
+        std::cout << "  - Specular Exponent: " << newMaterial.specular.exponent << std::endl;
+        std::cout << "  - Is Reflective: " << (newMaterial.hasReflective ? "yes" : "no") << std::endl;
+
         materials.push_back(newMaterial);
     }
+    std::cout << std::endl;
 
-    // Load Meshes
-    for (const auto& mesh : model.meshes) {
+    // Load Meshes and Create Geometry
+    std::cout << "Loading Meshes..." << std::endl;
+    size_t totalPrimitives = 0;
+    size_t totalVertices = 0;
+    size_t totalIndices = 0;
+
+    for (size_t i = 0; i < model.meshes.size(); i++) {
+        const auto& mesh = model.meshes[i];
+        std::cout << "Mesh " << i << ": " << (mesh.name.empty() ? "unnamed" : mesh.name) << std::endl;
+        std::cout << "  - Primitives: " << mesh.primitives.size() << std::endl;
+
         for (const auto& primitive : mesh.primitives) {
+            totalPrimitives++;
+
+            // Get position accessor
             const tinygltf::Accessor& posAccessor =
                 model.accessors[primitive.attributes.find("POSITION")->second];
+            totalVertices += posAccessor.count;
+
+            // Get index accessor if present
+            if (primitive.indices >= 0) {
+                const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+                totalIndices += indexAccessor.count;
+            }
 
             Geom newGeom;
             newGeom.type = CUBE;  // Using cube as base primitive
@@ -224,6 +271,15 @@ void Scene::loadGLTF(const std::string& filename) {
             newGeom.rotation = glm::vec3(0.0f);
             newGeom.scale = scale;
 
+            std::cout << "    Primitive:" << std::endl;
+            std::cout << "    - Material: " << newGeom.materialid << std::endl;
+            std::cout << "    - Center: (" << center.x << ", " << center.y << ", " << center.z << ")" << std::endl;
+            std::cout << "    - Scale: (" << scale.x << ", " << scale.y << ", " << scale.z << ")" << std::endl;
+            std::cout << "    - Vertices: " << posAccessor.count << std::endl;
+            if (primitive.indices >= 0) {
+                std::cout << "    - Indices: " << model.accessors[primitive.indices].count << std::endl;
+            }
+
             newGeom.transform = utilityCore::buildTransformationMatrix(
                 newGeom.translation, newGeom.rotation, newGeom.scale);
             newGeom.inverseTransform = glm::inverse(newGeom.transform);
@@ -233,12 +289,66 @@ void Scene::loadGLTF(const std::string& filename) {
         }
     }
 
-    // Set up default camera if none specified
-    if (model.cameras.empty()) {
+    std::cout << "\nMesh Statistics:" << std::endl;
+    std::cout << "- Total Primitives: " << totalPrimitives << std::endl;
+    std::cout << "- Total Vertices: " << totalVertices << std::endl;
+    std::cout << "- Total Indices: " << totalIndices << std::endl;
+    std::cout << std::endl;
+
+    // Print Camera Information
+    std::cout << "Camera Information:" << std::endl;
+    if (!model.cameras.empty()) {
+        for (size_t i = 0; i < model.cameras.size(); i++) {
+            const auto& camera = model.cameras[i];
+            std::cout << "Camera " << i << ": " << (camera.name.empty() ? "unnamed" : camera.name) << std::endl;
+            std::cout << "  - Type: " << camera.type << std::endl;
+
+            if (camera.type == "perspective") {
+                std::cout << "  - FOV: " << camera.perspective.yfov * (180.0f / PI) << " degrees" << std::endl;
+                std::cout << "  - Aspect Ratio: " << camera.perspective.aspectRatio << std::endl;
+                std::cout << "  - Near: " << camera.perspective.znear << std::endl;
+                if (camera.perspective.zfar > 0) {
+                    std::cout << "  - Far: " << camera.perspective.zfar << std::endl;
+                }
+            }
+            else if (camera.type == "orthographic") {
+                std::cout << "  - xmag: " << camera.orthographic.xmag << std::endl;
+                std::cout << "  - ymag: " << camera.orthographic.ymag << std::endl;
+                std::cout << "  - Near: " << camera.orthographic.znear << std::endl;
+                std::cout << "  - Far: " << camera.orthographic.zfar << std::endl;
+            }
+        }
+    }
+    else {
+        std::cout << "No cameras found in GLTF file. Using default camera." << std::endl;
         setupDefaultCamera();
     }
-}
+    std::cout << std::endl;
 
+    // Print Light Information
+    std::cout << "Light Information:" << std::endl;
+    if (!model.lights.empty()) {
+        for (size_t i = 0; i < model.lights.size(); i++) {
+            const auto& light = model.lights[i];
+            std::cout << "Light " << i << ": " << (light.name.empty() ? "unnamed" : light.name) << std::endl;
+            std::cout << "  - Type: " << light.type << std::endl;
+            std::cout << "  - Color: ("
+                << light.color[0] << ", "
+                << light.color[1] << ", "
+                << light.color[2] << ")" << std::endl;
+            std::cout << "  - Intensity: " << light.intensity << std::endl;
+
+            if (light.type == "spot") {
+                std::cout << "  - Inner Cone Angle: " << light.spot.innerConeAngle << std::endl;
+                std::cout << "  - Outer Cone Angle: " << light.spot.outerConeAngle << std::endl;
+            }
+        }
+    }
+    else {
+        std::cout << "No lights found in GLTF file." << std::endl;
+    }
+    std::cout << "\n=== GLTF Loading Complete ===\n" << std::endl;
+}
 void Scene::setupDefaultCamera() {
     Camera& cam = state.camera;
 
