@@ -135,6 +135,20 @@ Bounding volume hierarchy (BVH) is a tree structure on top of the scene geometry
 
 Image from [PBRT 4.3](https://pbr-book.org/3ed-2018/Primitives_and_Intersection_Acceleration/Bounding_Volume_Hierarchies) is a good illustration of BVH true. The BVH is built using the equal count partition method, which tries to split the primitives into two equal sized groups. The BVH is built on the CPU in a linear buffer (heap like structure) and then copied to the GPU for ray tracing. BVH could be potentially optimized by utilizing SAH (Surface Area Heuristic) and building the BVH directly on the GPU.
 
+### Json Scene Loader
+
+Added a JSON-based scene loader alongside the original text parser. The new loader provides a more structured way to define 3D scenes with support for:
+
+- Materials (color, specular, reflective properties)
+- Objects (spheres, cubes with transformations)
+- Camera settings (position, FOV, DOF)
+
+Benefits:
+
+- More readable scene files
+- Easier to maintain and validate
+- Less error-prone with structured format
+
 ## Performance Analysis
 
 Let's take a look at the performance of the path tracer with different features enabled. Stream compaction plays a important role in the correctness of the algorithm in addition to its performance benefits. So stream compaction will be enabled in all tests and we will use path tracer with only stream compaction method enabled as the baseline.
