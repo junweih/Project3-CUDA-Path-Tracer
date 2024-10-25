@@ -13,8 +13,9 @@ public:
 
 private:
     static void loadMaterials(const json& materials, Scene* scene);
-    static void loadObjects(const json& objects, Scene* scene);
+    static void loadJsonObjects(const json& objects, Scene* scene);
     static void loadCamera(const json& camera, Scene* scene);
+    static void loadGLTF(Scene* scene, const std::string& filename);
     
 };
 
