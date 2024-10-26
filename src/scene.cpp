@@ -15,6 +15,15 @@ Scene::Scene(const std::string& filename) {
     loadFromFile(filename);
 }
 
+Scene::~Scene() {
+    for (auto& geom : geoms) {
+        if (geom.type == GLTF_MESH && geom.meshData != nullptr) {
+            cudaFree(geom.meshData->dev_triangles);
+            delete geom.meshData;
+        }
+    }
+}
+
 void Scene::loadFromFile(const std::string& filename) {
     std::cout << "Reading scene from " << filename << "..." << std::endl;
 
@@ -151,6 +160,94 @@ void Scene::loadCamera(const json& camera) {
     std::fill(state.image.begin(), state.image.end(), glm::vec3());
 }
 
+void loadMeshFromPrimitive(Geom& geom, const tinygltf::Model& model, const tinygltf::Primitive& primitive) {
+    // Get vertex position data
+    const tinygltf::Accessor& posAccessor = model.accessors[primitive.attributes.find("POSITION")->second];
+    const tinygltf::BufferView& posView = model.bufferViews[posAccessor.bufferView];
+    const float* positions = reinterpret_cast<const float*>(&(model.buffers[posView.buffer].data[posView.byteOffset + posAccessor.byteOffset]));
+
+    // Get normal data
+    const tinygltf::Accessor& normalAccessor = model.accessors[primitive.attributes.find("NORMAL")->second];
+    const tinygltf::BufferView& normalView = model.bufferViews[normalAccessor.bufferView];
+    const float* normals = reinterpret_cast<const float*>(&(model.buffers[normalView.buffer].data[normalView.byteOffset + normalAccessor.byteOffset]));
+
+    // Get UV data
+    const tinygltf::Accessor& uvAccessor = model.accessors[primitive.attributes.find("TEXCOORD_0")->second];
+    const tinygltf::BufferView& uvView = model.bufferViews[uvAccessor.bufferView];
+    const float* uvs = reinterpret_cast<const float*>(&(model.buffers[uvView.buffer].data[uvView.byteOffset + uvAccessor.byteOffset]));
+
+    // Get indices
+    const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+    const tinygltf::BufferView& indexView = model.bufferViews[indexAccessor.bufferView];
+    const uint16_t* indices = reinterpret_cast<const uint16_t*>(&(model.buffers[indexView.buffer].data[indexView.byteOffset + indexAccessor.byteOffset]));
+
+    // Create triangles
+    int numTriangles = indexAccessor.count / 3;
+    std::vector<Triangle> triangles(numTriangles);
+
+    for (int i = 0; i < numTriangles; i++) {
+        uint16_t idx0 = indices[i * 3];
+        uint16_t idx1 = indices[i * 3 + 1];
+        uint16_t idx2 = indices[i * 3 + 2];
+
+        // Set vertices
+        triangles[i].v0 = glm::vec3(
+            positions[idx0 * 3],
+            positions[idx0 * 3 + 1],
+            positions[idx0 * 3 + 2]
+        );
+        triangles[i].v1 = glm::vec3(
+            positions[idx1 * 3],
+            positions[idx1 * 3 + 1],
+            positions[idx1 * 3 + 2]
+        );
+        triangles[i].v2 = glm::vec3(
+            positions[idx2 * 3],
+            positions[idx2 * 3 + 1],
+            positions[idx2 * 3 + 2]
+        );
+
+        // Set normals
+        triangles[i].n0 = glm::vec3(
+            normals[idx0 * 3],
+            normals[idx0 * 3 + 1],
+            normals[idx0 * 3 + 2]
+        );
+        triangles[i].n1 = glm::vec3(
+            normals[idx1 * 3],
+            normals[idx1 * 3 + 1],
+            normals[idx1 * 3 + 2]
+        );
+        triangles[i].n2 = glm::vec3(
+            normals[idx2 * 3],
+            normals[idx2 * 3 + 1],
+            normals[idx2 * 3 + 2]
+        );
+
+        // Set UVs
+        triangles[i].t0 = glm::vec2(
+            uvs[idx0 * 2],
+            uvs[idx0 * 2 + 1]
+        );
+        triangles[i].t1 = glm::vec2(
+            uvs[idx1 * 2],
+            uvs[idx1 * 2 + 1]
+        );
+        triangles[i].t2 = glm::vec2(
+            uvs[idx2 * 2],
+            uvs[idx2 * 2 + 1]
+        );
+    }
+
+    // Allocate and set up mesh data
+    geom.meshData = new MeshData();
+    geom.meshData->numTriangles = numTriangles;
+
+    // Allocate GPU memory and copy triangle data
+    cudaMalloc(&geom.meshData->dev_triangles, numTriangles * sizeof(Triangle));
+    cudaMemcpy(geom.meshData->dev_triangles, triangles.data(), numTriangles * sizeof(Triangle), cudaMemcpyHostToDevice);
+}
+
 void Scene::loadGLTF(const std::string& filename) {
     std::cout << "\n=== Loading GLTF Scene: " << filename << " ===\n" << std::endl;
 
@@ -180,7 +277,6 @@ void Scene::loadGLTF(const std::string& filename) {
     std::cout << "- Textures: " << model.textures.size() << std::endl;
     std::cout << "- Images: " << model.images.size() << std::endl;
     std::cout << "- Cameras: " << model.cameras.size() << std::endl;
-    std::cout << "- Lights: " << model.lights.size() << std::endl;
     std::cout << std::endl;
 
     // Load Materials
@@ -191,6 +287,8 @@ void Scene::loadGLTF(const std::string& filename) {
 
         std::cout << "Material " << i << ": " << (material.name.empty() ? "unnamed" : material.name) << std::endl;
 
+        // Set default color if no texture
+        newMaterial.color = glm::vec3(1.0f);
         if (material.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
             newMaterial.color = glm::vec3(
                 material.pbrMetallicRoughness.baseColorFactor[0],
@@ -203,27 +301,30 @@ void Scene::loadGLTF(const std::string& filename) {
                 << newMaterial.color.z << ")" << std::endl;
         }
 
+        // Basic PBR conversion
         float roughness = material.pbrMetallicRoughness.roughnessFactor;
         float metallic = material.pbrMetallicRoughness.metallicFactor;
 
         newMaterial.specular.exponent = (1.0f - roughness) * 100.0f;
-        newMaterial.specular.color = glm::vec3(1.0f);
-        newMaterial.hasReflective = metallic > 0.5f;
-        newMaterial.hasRefractive = false;
-        newMaterial.indexOfRefraction = 1.0f;
-        newMaterial.emittance = 0.0f;
-        newMaterial.hasTransmission = false;
+        newMaterial.specular.color = glm::vec3(metallic);
+        newMaterial.hasReflective = metallic > 0.5f ? 1.0f : 0.0f;
 
         std::cout << "  - Roughness: " << roughness << std::endl;
         std::cout << "  - Metallic: " << metallic << std::endl;
         std::cout << "  - Specular Exponent: " << newMaterial.specular.exponent << std::endl;
         std::cout << "  - Is Reflective: " << (newMaterial.hasReflective ? "yes" : "no") << std::endl;
 
+        // Set defaults for other properties
+        newMaterial.hasRefractive = 0.0f;
+        newMaterial.indexOfRefraction = 1.0f;
+        newMaterial.emittance = 0.0f;
+        newMaterial.hasTransmission = 0.0f;
+
         materials.push_back(newMaterial);
     }
     std::cout << std::endl;
 
-    // Load Meshes and Create Geometry
+    // Load Meshes
     std::cout << "Loading Meshes..." << std::endl;
     size_t totalPrimitives = 0;
     size_t totalVertices = 0;
@@ -238,52 +339,39 @@ void Scene::loadGLTF(const std::string& filename) {
             totalPrimitives++;
 
             // Get position accessor
-            const tinygltf::Accessor& posAccessor =
-                model.accessors[primitive.attributes.find("POSITION")->second];
+            const tinygltf::Accessor& posAccessor = model.accessors[primitive.attributes.find("POSITION")->second];
             totalVertices += posAccessor.count;
 
-            // Get index accessor if present
-            if (primitive.indices >= 0) {
-                const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
-                totalIndices += indexAccessor.count;
-            }
+            // Get index accessor
+            const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+            totalIndices += indexAccessor.count;
 
             Geom newGeom;
             newGeom.type = GLTF_MESH;
             newGeom.materialid = primitive.material;
 
-            // Calculate bounding box
-            glm::vec3 min(
-                posAccessor.minValues[0],
-                posAccessor.minValues[1],
-                posAccessor.minValues[2]
-            );
-            glm::vec3 max(
-                posAccessor.maxValues[0],
-                posAccessor.maxValues[1],
-                posAccessor.maxValues[2]
-            );
-
-            glm::vec3 center = (min + max) * 0.5f;
-            glm::vec3 scale = (max - min) * 0.5f;
-
-            newGeom.translation = center;
-            newGeom.rotation = glm::vec3(0.0f);
-            newGeom.scale = scale;
-
-            std::cout << "    Primitive:" << std::endl;
-            std::cout << "    - Material: " << newGeom.materialid << std::endl;
-            std::cout << "    - Center: (" << center.x << ", " << center.y << ", " << center.z << ")" << std::endl;
-            std::cout << "    - Scale: (" << scale.x << ", " << scale.y << ", " << scale.z << ")" << std::endl;
-            std::cout << "    - Vertices: " << posAccessor.count << std::endl;
-            if (primitive.indices >= 0) {
-                std::cout << "    - Indices: " << model.accessors[primitive.indices].count << std::endl;
+            try {
+                loadMeshFromPrimitive(newGeom, model, primitive);
+                std::cout << "    - Loaded " << newGeom.meshData->numTriangles << " triangles" << std::endl;
             }
+            catch (const std::exception& e) {
+                std::cerr << "Error loading mesh primitive: " << e.what() << std::endl;
+                continue;
+            }
+
+            // Set default transforms
+            newGeom.translation = glm::vec3(0.0f);
+            newGeom.rotation = glm::vec3(0.0f);
+            newGeom.scale = glm::vec3(1.0f);
 
             newGeom.transform = utilityCore::buildTransformationMatrix(
                 newGeom.translation, newGeom.rotation, newGeom.scale);
             newGeom.inverseTransform = glm::inverse(newGeom.transform);
             newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
+
+            std::cout << "    - Material: " << newGeom.materialid << std::endl;
+            std::cout << "    - Vertices: " << posAccessor.count << std::endl;
+            std::cout << "    - Indices: " << indexAccessor.count << std::endl;
 
             geoms.push_back(newGeom);
         }
@@ -311,12 +399,6 @@ void Scene::loadGLTF(const std::string& filename) {
                     std::cout << "  - Far: " << camera.perspective.zfar << std::endl;
                 }
             }
-            else if (camera.type == "orthographic") {
-                std::cout << "  - xmag: " << camera.orthographic.xmag << std::endl;
-                std::cout << "  - ymag: " << camera.orthographic.ymag << std::endl;
-                std::cout << "  - Near: " << camera.orthographic.znear << std::endl;
-                std::cout << "  - Far: " << camera.orthographic.zfar << std::endl;
-            }
         }
     }
     else {
@@ -325,30 +407,9 @@ void Scene::loadGLTF(const std::string& filename) {
     }
     std::cout << std::endl;
 
-    // Print Light Information
-    std::cout << "Light Information:" << std::endl;
-    if (!model.lights.empty()) {
-        for (size_t i = 0; i < model.lights.size(); i++) {
-            const auto& light = model.lights[i];
-            std::cout << "Light " << i << ": " << (light.name.empty() ? "unnamed" : light.name) << std::endl;
-            std::cout << "  - Type: " << light.type << std::endl;
-            std::cout << "  - Color: ("
-                << light.color[0] << ", "
-                << light.color[1] << ", "
-                << light.color[2] << ")" << std::endl;
-            std::cout << "  - Intensity: " << light.intensity << std::endl;
-
-            if (light.type == "spot") {
-                std::cout << "  - Inner Cone Angle: " << light.spot.innerConeAngle << std::endl;
-                std::cout << "  - Outer Cone Angle: " << light.spot.outerConeAngle << std::endl;
-            }
-        }
-    }
-    else {
-        std::cout << "No lights found in GLTF file." << std::endl;
-    }
     std::cout << "\n=== GLTF Loading Complete ===\n" << std::endl;
 }
+
 void Scene::setupDefaultCamera() {
     Camera& cam = state.camera;
 

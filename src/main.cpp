@@ -2,6 +2,7 @@
 #include "preview.h"
 #include <cstring>
 #include <direct.h>
+#include <iomanip>
 
 static std::string startTimeString;
 
@@ -41,6 +42,9 @@ int main(int argc, char** argv) {
 	}
 
 	const char* sceneFile = argv[1];
+
+	//testGLTFLoading(sceneFile);
+	//return 0;
 
 	// Load scene file
 	scene = new Scene(sceneFile);
@@ -221,4 +225,117 @@ void mousePositionCallback(GLFWwindow* window, double xpos, double ypos) {
 	}
 	lastX = xpos;
 	lastY = ypos;
+}
+
+// Utility function to print vector values
+void printVec3(const glm::vec3& v, const std::string& label) {
+	std::cout << label << ": ("
+		<< std::fixed << std::setprecision(3)
+		<< v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+}
+
+// Test loading and basic validation of a GLTF scene
+void testGLTFLoading(const std::string& filename) {
+	std::cout << "\n=== Testing GLTF Loading: " << filename << " ===" << std::endl;
+
+	try {
+		Scene scene;
+		scene.loadFromFile(filename);
+
+		// 1. Basic Scene Validation
+		std::cout << "\n1. Scene Statistics:" << std::endl;
+		std::cout << "Number of geometries: " << scene.geoms.size() << std::endl;
+		std::cout << "Number of materials: " << scene.materials.size() << std::endl;
+
+		// Verify we have at least one geometry and material
+		assert(!scene.geoms.empty() && "Scene should have at least one geometry");
+		assert(!scene.materials.empty() && "Scene should have at least one material");
+
+		// 2. Geometry Validation
+		std::cout << "\n2. Geometry Validation:" << std::endl;
+		for (size_t i = 0; i < scene.geoms.size(); i++) {
+			const Geom& geom = scene.geoms[i];
+			std::cout << "\nGeometry " << i << ":" << std::endl;
+
+			// Check geometry type
+			std::cout << "Type: " <<
+				(geom.type == SPHERE ? "Sphere" :
+					geom.type == CUBE ? "Cube" :
+					geom.type == GLTF_MESH ? "GLTF Mesh" : "Unknown") << std::endl;
+
+			// Validate material ID
+			assert(geom.materialid >= 0 &&
+				geom.materialid < scene.materials.size() &&
+				"Material ID should be valid");
+			std::cout << "Material ID: " << geom.materialid << std::endl;
+
+			// Print transformation info
+			printVec3(geom.translation, "Translation");
+			printVec3(geom.rotation, "Rotation");
+			printVec3(geom.scale, "Scale");
+
+			// For mesh type, validate mesh data
+			if (geom.type == GLTF_MESH) {
+				assert(geom.meshData != nullptr && "Mesh data should not be null");
+				assert(geom.meshData->numTriangles > 0 && "Should have triangles");
+				assert(geom.meshData->dev_triangles != nullptr && "Triangle data should be allocated");
+
+				std::cout << "Number of triangles: " << geom.meshData->numTriangles << std::endl;
+			}
+
+			// Validate transformation matrices
+			assert(glm::length(glm::vec3(geom.transform[3])) >= 0 &&
+				"Transform matrix should be valid");
+		}
+
+		// 3. Material Validation
+		std::cout << "\n3. Material Validation:" << std::endl;
+		for (size_t i = 0; i < scene.materials.size(); i++) {
+			const Material& material = scene.materials[i];
+			std::cout << "\nMaterial " << i << ":" << std::endl;
+
+			// Check color values are valid
+			assert(material.color.r >= 0 && material.color.r <= 1 &&
+				material.color.g >= 0 && material.color.g <= 1 &&
+				material.color.b >= 0 && material.color.b <= 1 &&
+				"Color values should be in range [0,1]");
+
+			printVec3(material.color, "Base Color");
+
+			// Print material properties
+			std::cout << "Specular Exponent: " << material.specular.exponent << std::endl;
+			printVec3(material.specular.color, "Specular Color");
+			std::cout << "Is Reflective: " << (material.hasReflective ? "Yes" : "No") << std::endl;
+			std::cout << "Is Refractive: " << (material.hasRefractive ? "Yes" : "No") << std::endl;
+			std::cout << "IOR: " << material.indexOfRefraction << std::endl;
+			std::cout << "Emittance: " << material.emittance << std::endl;
+		}
+
+		// 4. Camera Validation
+		std::cout << "\n4. Camera Validation:" << std::endl;
+		const Camera& cam = scene.state.camera;
+
+		assert(cam.resolution.x > 0 && cam.resolution.y > 0 &&
+			"Camera resolution should be positive");
+		std::cout << "Resolution: " << cam.resolution.x << "x" << cam.resolution.y << std::endl;
+
+		printVec3(cam.position, "Position");
+		printVec3(cam.lookAt, "Look At");
+		printVec3(cam.up, "Up Vector");
+
+		// Validate camera vectors
+		assert(glm::length(cam.view) > 0.99f && glm::length(cam.view) < 1.01f &&
+			"View vector should be normalized");
+		assert(glm::length(cam.up) > 0.99f && glm::length(cam.up) < 1.01f &&
+			"Up vector should be normalized");
+		assert(glm::length(cam.right) > 0.99f && glm::length(cam.right) < 1.01f &&
+			"Right vector should be normalized");
+
+		std::cout << "\n=== GLTF Loading Tests Passed ===" << std::endl;
+
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+		throw;
+	}
 }

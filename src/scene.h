@@ -20,7 +20,7 @@ public:
     // Constructors and destructor
     Scene();
     Scene(const std::string& filename);
-    ~Scene() = default;
+    ~Scene();
 
     // Public methods
     void loadFromFile(const std::string& filename);
