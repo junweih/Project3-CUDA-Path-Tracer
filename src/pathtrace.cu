@@ -84,46 +84,149 @@ void InitDataContainer(GuiDataContainer* imGuiData)
 }
 
 void pathtraceInit(Scene* scene) {
+	// Guard against null scene
+	if (!scene) {
+		std::cerr << "Error: Attempting to initialize with null scene" << std::endl;
+		return;
+	}
+
+	// Store scene pointer first
 	hst_scene = scene;
 
+	// Now we can safely access the camera
 	const Camera& cam = hst_scene->state.camera;
 	const int pixelcount = cam.resolution.x * cam.resolution.y;
 
+	// Create a host-side copy of geometry data to handle mesh pointers
+	std::vector<Geom> geomsCopy = scene->geoms;
+
+	// Create a temporary array to store mesh data pointers
+	std::vector<MeshData> meshDataCopy;
+
+	// Process mesh data and update pointers
+	for (size_t i = 0; i < geomsCopy.size(); i++) {
+		if (geomsCopy[i].type == GLTF_MESH && geomsCopy[i].meshData != nullptr) {
+			// Copy the mesh data structure
+			MeshData meshData;
+			meshData.numTriangles = geomsCopy[i].meshData->numTriangles;
+
+			// Allocate and copy triangle data to GPU
+			cudaMalloc(&meshData.dev_triangles,
+				meshData.numTriangles * sizeof(Triangle));
+			cudaMemcpy(meshData.dev_triangles,
+				scene->geoms[i].meshData->dev_triangles,
+				meshData.numTriangles * sizeof(Triangle),
+				cudaMemcpyDeviceToDevice);
+
+			// Store the mesh data
+			meshDataCopy.push_back(meshData);
+
+			// Allocate GPU memory for the MeshData structure
+			MeshData* dev_meshData;
+			cudaMalloc(&dev_meshData, sizeof(MeshData));
+			cudaMemcpy(dev_meshData, &meshDataCopy.back(), sizeof(MeshData),
+				cudaMemcpyHostToDevice);
+
+			// Update the geometry to point to the GPU mesh data
+			geomsCopy[i].meshData = dev_meshData;
+}
+	}
+
+	// Allocate and copy other buffers
 	cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
 	cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
 
 	cudaMalloc(&dev_paths, pixelcount * sizeof(PathSegment));
 
+	// Copy geometries with updated mesh pointers
 	cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
-	cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_geoms, geomsCopy.data(),
+		scene->geoms.size() * sizeof(Geom),
+		cudaMemcpyHostToDevice);
 
 	cudaMalloc(&dev_materials, scene->materials.size() * sizeof(Material));
-	cudaMemcpy(dev_materials, scene->materials.data(), scene->materials.size() * sizeof(Material), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_materials, scene->materials.data(),
+		scene->materials.size() * sizeof(Material),
+		cudaMemcpyHostToDevice);
 
 	cudaMalloc(&dev_intersections, pixelcount * sizeof(ShadeableIntersection));
 	cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
-	// TODO: initialize any extra device memeory you need
 #if CACHE_FIRST_BOUNCE
 	cudaMalloc(&dev_first_bounce_cache, pixelcount * sizeof(ShadeableIntersection));
 #endif
 
+	cudaDeviceSynchronize();
 	checkCUDAError("pathtraceInit");
 }
 
+// And update pathtraceFree to properly clean up mesh data:
 void pathtraceFree() {
-	cudaFree(dev_image);  // no-op if dev_image is null
-	cudaFree(dev_paths);
-	cudaFree(dev_geoms);
-	cudaFree(dev_materials);
-	cudaFree(dev_intersections);
-	// TODO: clean up any extra device memory you created
+	cudaDeviceSynchronize();
+
+	// Free mesh data first
+	if (dev_geoms) {
+		// Create a temporary array to store geometry data
+		std::vector<Geom> geoms(hst_scene->geoms.size());
+		cudaMemcpy(geoms.data(), dev_geoms,
+			hst_scene->geoms.size() * sizeof(Geom),
+			cudaMemcpyDeviceToHost);
+
+		// Free mesh data for each geometry
+		for (const auto& geom : geoms) {
+			if (geom.type == GLTF_MESH && geom.meshData != nullptr) {
+				// Get the mesh data from device
+				MeshData meshData;
+				cudaMemcpy(&meshData, geom.meshData, sizeof(MeshData),
+					cudaMemcpyDeviceToHost);
+
+				// Free triangle data
+				cudaFree(meshData.dev_triangles);
+
+				// Free the mesh data structure
+				cudaFree(geom.meshData);
+			}
+		}
+
+		// Free the geometries array
+		cudaFree(dev_geoms);
+		dev_geoms = nullptr;
+	}
+
+	// Free other buffers
+	if (dev_image) {
+		cudaFree(dev_image);
+		dev_image = nullptr;
+	}
+
+	if (dev_paths) {
+		cudaFree(dev_paths);
+		dev_paths = nullptr;
+	}
+
+	if (dev_materials) {
+		cudaFree(dev_materials);
+		dev_materials = nullptr;
+	}
+
+	if (dev_intersections) {
+		cudaFree(dev_intersections);
+		dev_intersections = nullptr;
+	}
+
 #if CACHE_FIRST_BOUNCE
-	cudaFree(dev_first_bounce_cache);
+	if (dev_first_bounce_cache) {
+		cudaFree(dev_first_bounce_cache);
+		dev_first_bounce_cache = nullptr;
+	}
 #endif
 
-	checkCUDAError("pathtraceFree");
+	hst_scene = nullptr;
+
+	cudaDeviceSynchronize();
+	cudaGetLastError();
 }
+
 
 #pragma region Kernel
 // Add this structure to store AA sample offsets

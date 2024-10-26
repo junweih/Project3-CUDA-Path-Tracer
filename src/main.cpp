@@ -118,6 +118,7 @@ void saveImage() {
 
 void runCuda() {
 	if (camchanged) {
+		// Reset iteration and update camera
 		iteration = 0;
 		Camera& cam = renderState->camera;
 		cameraPosition.x = zoom * sin(phi) * sin(theta);
@@ -126,7 +127,7 @@ void runCuda() {
 
 		cam.view = -glm::normalize(cameraPosition);
 		glm::vec3 v = cam.view;
-		glm::vec3 u = glm::vec3(0, 1, 0);//glm::normalize(cam.up);
+		glm::vec3 u = glm::vec3(0, 1, 0);
 		glm::vec3 r = glm::cross(v, u);
 		cam.up = glm::cross(r, v);
 		cam.right = r;
@@ -135,14 +136,18 @@ void runCuda() {
 		cameraPosition += cam.lookAt;
 		cam.position = cameraPosition;
 		camchanged = false;
-	}
 
-	// Map OpenGL buffer object for writing from CUDA on a single GPU
-	// No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not use this buffer
-
-	if (iteration == 0) {
+		// Clean up and reinitialize when camera changes
 		pathtraceFree();
 		pathtraceInit(scene);
+	}
+
+	// First-time initialization
+	if (iteration == 0) {
+		// Only initialize, don't free since we might have just done that above
+		if (!camchanged) {  // Avoid double initialization if camera just changed
+			pathtraceInit(scene);
+		}
 	}
 
 	if (iteration < renderState->iterations) {
