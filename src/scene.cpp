@@ -249,7 +249,7 @@ void Scene::loadGLTF(const std::string& filename) {
             }
 
             Geom newGeom;
-            newGeom.type = CUBE;  // Using cube as base primitive
+            newGeom.type = GLTF_MESH;
             newGeom.materialid = primitive.material;
 
             // Calculate bounding box
