@@ -377,6 +377,38 @@ void Scene::loadGLTF(const std::string& filename) {
         }
     }
 
+    // After loading mesh data, add these debug prints
+    for (size_t i = 0; i < model.meshes.size(); i++) {
+        const auto& mesh = model.meshes[i];
+        std::cout << "\nMesh " << i << " debug:" << std::endl;
+
+        for (const auto& primitive : mesh.primitives) {
+            // Get vertex position data
+            const tinygltf::Accessor& posAccessor = model.accessors[primitive.attributes.find("POSITION")->second];
+            const tinygltf::BufferView& posView = model.bufferViews[posAccessor.bufferView];
+            const float* positions = reinterpret_cast<const float*>(&(model.buffers[posView.buffer].data[posView.byteOffset + posAccessor.byteOffset]));
+
+            std::cout << "First triangle vertices:" << std::endl;
+            for (int v = 0; v < 9; v += 3) {
+                std::cout << "v" << v / 3 << ": ("
+                    << positions[v] << ", "
+                    << positions[v + 1] << ", "
+                    << positions[v + 2] << ")" << std::endl;
+            }
+
+            // Print bounding box
+            std::cout << "Bounding box:" << std::endl;
+            std::cout << "Min: ("
+                << posAccessor.minValues[0] << ", "
+                << posAccessor.minValues[1] << ", "
+                << posAccessor.minValues[2] << ")" << std::endl;
+            std::cout << "Max: ("
+                << posAccessor.maxValues[0] << ", "
+                << posAccessor.maxValues[1] << ", "
+                << posAccessor.maxValues[2] << ")" << std::endl;
+        }
+    }
+
     std::cout << "\nMesh Statistics:" << std::endl;
     std::cout << "- Total Primitives: " << totalPrimitives << std::endl;
     std::cout << "- Total Vertices: " << totalVertices << std::endl;
@@ -414,7 +446,7 @@ void Scene::setupDefaultCamera() {
     Camera& cam = state.camera;
 
     cam.resolution = glm::vec2(800, 600);
-    cam.position = glm::vec3(0, 0, -10);
+    cam.position = glm::vec3(0, 0, -3);
     cam.lookAt = glm::vec3(0, 0, 0);
     cam.up = glm::vec3(0, 1, 0);
     cam.fov = glm::vec2(45.0f);
@@ -430,4 +462,10 @@ void Scene::setupDefaultCamera() {
     int arraylen = cam.resolution.x * cam.resolution.y;
     state.image.resize(arraylen);
     std::fill(state.image.begin(), state.image.end(), glm::vec3());
+
+    // Add this after camera setup
+    printf("Camera setup:\n");
+    printf("Position: (%f,%f,%f)\n", cam.position.x, cam.position.y, cam.position.z);
+    printf("View: (%f,%f,%f)\n", cam.view.x, cam.view.y, cam.view.z);
+    printf("Resolution: %dx%d\n", cam.resolution.x, cam.resolution.y);
 }
