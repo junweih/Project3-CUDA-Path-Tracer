@@ -265,62 +265,43 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 		segment.color = glm::vec3(0.0f);
 		segment.throughput = glm::vec3(1.0f);
 
-		thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
-		thrust::uniform_real_distribution<float> u01(0, 1);
+		// Convert pixel coordinates to camera space
+		float ndc_x = 2.0f * ((x + 0.5f) / cam.resolution.x) - 1.0f;  // Range [-1, 1]
+		float ndc_y = 1.0f - 2.0f * ((y + 0.5f) / cam.resolution.y);  // Range [-1, 1]
 
-		float u = (float)x;
-		float v = (float)y;
+		// Calculate view plane distances based on FOV
+		float tan_fov_x = tanf(glm::radians(cam.fov.x) * 0.5f);
+		float tan_fov_y = tanf(glm::radians(cam.fov.y) * 0.5f);
 
-#if SSAA
-		// Stochastic Sampled Anti-Aliasing
-		AAJitter aaOffsets[AA_SAMPLES];
-		generateAAOffsets(aaOffsets, AA_SAMPLES);
-
-		int sampleIndex = iter % AA_SAMPLES;
-
-		u += aaOffsets[sampleIndex].x;
-		v += aaOffsets[sampleIndex].y;
-
-		// Add a small random jitter for additional noise reduction
-		u += u01(rng) * 0.1f;
-		v += u01(rng) * 0.1f;
-#elif AA
-		// Use a simple jittering method for anti-aliasing
-		u += u01(rng);
-		v += u01(rng);
-#else
-		// Add 0.5 to center the ray in the pixel
-		u += 0.5f;
-		v += 0.5f;
-#endif
-
-		glm::vec3 direction = glm::normalize(cam.view
-			- cam.right * cam.pixelLength.x * (u - (float)cam.resolution.x * 0.5f)
-			- cam.up * cam.pixelLength.y * (v - (float)cam.resolution.y * 0.5f)
+		// Calculate direction vector
+		glm::vec3 direction = glm::normalize(
+			cam.view +                    // Forward vector
+			cam.right * (ndc_x * tan_fov_x) +   // Right component
+			cam.up * (ndc_y * tan_fov_y)        // Up component
 		);
 
-		if (cam.dofEnabled) {
-			// Calculate the point on the focal plane
-			glm::vec3 focalPoint = cam.position + cam.focalLength * direction;
-
-			// Generate a random point on the lens for depth of field
-			float r = sqrt(u01(rng)) * cam.aperture;
-			float theta = u01(rng) * 2 * PI;
-			glm::vec3 offset = r * (cos(theta) * cam.right + sin(theta) * cam.up);
-
-			// Set the ray origin to the offset camera position
-			segment.ray.origin = cam.position + offset;
-
-			// Set the ray direction to point from the offset origin through the focal point
-			segment.ray.direction = glm::normalize(focalPoint - segment.ray.origin);
-		}
-		else {
-			// Standard ray generation without depth of field
-			segment.ray.origin = cam.position;
-			segment.ray.direction = direction;
+		// Debug prints for specific pixels
+		if (threadIdx.x == 0 && blockIdx.x == 0) {
+			printf("\nCamera debug info:\n");
+			printf("Position: (%f,%f,%f)\n", cam.position.x, cam.position.y, cam.position.z);
+			printf("View direction: (%f,%f,%f)\n", cam.view.x, cam.view.y, cam.view.z);
+			printf("FOV: (%f,%f) degrees\n", cam.fov.x, cam.fov.y);
 		}
 
+		if ((x == 0 && y == 0) ||                                    // Top-left
+			(x == cam.resolution.x - 1 && y == 0) ||                   // Top-right
+			(x == 0 && y == cam.resolution.y - 1) ||                   // Bottom-left
+			(x == cam.resolution.x - 1 && y == cam.resolution.y - 1) ||  // Bottom-right
+			(x == cam.resolution.x / 2 && y == cam.resolution.y / 2))    // Center
+		{
+			printf("\nPixel (%d,%d):\n", x, y);
+			printf("NDC coordinates: (%f,%f)\n", ndc_x, ndc_y);
+			printf("Ray direction: (%f,%f,%f)\n",
+				direction.x, direction.y, direction.z);
+		}
 
+		segment.ray.origin = cam.position;
+		segment.ray.direction = direction;
 		segment.pixelIndex = index;
 		segment.remainingBounces = traceDepth;
 	}
@@ -343,14 +324,25 @@ __global__ void computeIntersections(
 	if (path_index < num_paths) {
 		PathSegment pathSegment = pathSegments[path_index];
 
+		// Debug info for first thread only to avoid spam
+		if (threadIdx.x == 0 && blockIdx.x == 0) {
+			printf("\n=== Starting intersection tests for path %d ===\n", path_index);
+			printf("Ray origin: (%f,%f,%f)\n",
+				pathSegment.ray.origin.x,
+				pathSegment.ray.origin.y,
+				pathSegment.ray.origin.z);
+			printf("Ray direction: (%f,%f,%f)\n",
+				pathSegment.ray.direction.x,
+				pathSegment.ray.direction.y,
+				pathSegment.ray.direction.z);
+		}
+
 		float t;
 		glm::vec3 intersect_point;
 		glm::vec3 normal;
 		float t_min = FLT_MAX;
 		int hit_geom_index = -1;
 		bool outside = true;
-
-		// Temporary variables for mesh intersection
 		glm::vec2 texCoord;
 
 		for (int i = 0; i < geoms_size; i++) {
@@ -358,6 +350,10 @@ __global__ void computeIntersections(
 			glm::vec3 tmp_intersect;
 			glm::vec3 tmp_normal;
 			bool tmp_outside;
+
+			if (threadIdx.x == 0 && blockIdx.x == 0) {
+				printf("\nTesting geometry %d of type %d\n", i, geom.type);
+			}
 
 			switch (geom.type) {
 			case SPHERE:
@@ -369,6 +365,18 @@ __global__ void computeIntersections(
 				break;
 
 			case GLTF_MESH:
+				if (threadIdx.x == 0 && blockIdx.x == 0) {
+					printf("Testing GLTF mesh with %d triangles\n", geom.meshData->numTriangles);
+					printf("Transformation matrix:\n");
+					for (int row = 0; row < 4; row++) {
+						printf("%f %f %f %f\n",
+							geom.transform[row][0],
+							geom.transform[row][1],
+							geom.transform[row][2],
+							geom.transform[row][3]);
+					}
+				}
+
 				glm::vec2 tmp_texcoord;
 				t = meshIntersectionTest(
 					geom.meshData->dev_triangles,
@@ -387,7 +395,25 @@ __global__ void computeIntersections(
 				break;
 			}
 
+			if (threadIdx.x == 0 && blockIdx.x == 0) {
+				if (t > 0.0f) {
+					printf("Hit found for geometry %d:\n", i);
+					printf("Distance (t): %f\n", t);
+					printf("Hit point: (%f,%f,%f)\n",
+						tmp_intersect.x, tmp_intersect.y, tmp_intersect.z);
+					printf("Normal: (%f,%f,%f)\n",
+						tmp_normal.x, tmp_normal.y, tmp_normal.z);
+					printf("Outside: %s\n", tmp_outside ? "true" : "false");
+				}
+				else {
+					printf("No hit for geometry %d (t = %f)\n", i, t);
+				}
+			}
+
 			if (t > 0.0f && t < t_min) {
+				if (threadIdx.x == 0 && blockIdx.x == 0) {
+					printf("New closest hit found! Previous t_min = %f, new t = %f\n", t_min, t);
+				}
 				t_min = t;
 				hit_geom_index = i;
 				intersect_point = tmp_intersect;
@@ -397,9 +423,23 @@ __global__ void computeIntersections(
 		}
 
 		if (hit_geom_index == -1) {
+			if (threadIdx.x == 0 && blockIdx.x == 0) {
+				printf("\nNo intersection found for path %d\n", path_index);
+			}
 			intersections[path_index].t = -1.0f;
 		}
 		else {
+			if (threadIdx.x == 0 && blockIdx.x == 0) {
+				printf("\nFinal intersection result for path %d:\n", path_index);
+				printf("Hit geometry: %d\n", hit_geom_index);
+				printf("Material ID: %d\n", geoms[hit_geom_index].materialid);
+				printf("Distance: %f\n", t_min);
+				printf("Hit point: (%f,%f,%f)\n",
+					intersect_point.x, intersect_point.y, intersect_point.z);
+				printf("Normal: (%f,%f,%f)\n",
+					normal.x, normal.y, normal.z);
+				printf("=========================================\n");
+			}
 			intersections[path_index].t = t_min;
 			intersections[path_index].materialId = geoms[hit_geom_index].materialid;
 			intersections[path_index].surfaceNormal = normal;
@@ -461,6 +501,18 @@ __global__ void shadeFakeMaterial(
 	}
 }
 
+__device__ glm::vec3 computeSkyGradient(const glm::vec3& direction) {
+	// Convert direction to normalized up component
+	float t = 0.5f * (direction.y + 1.0f);  // Map y from [-1,1] to [0,1]
+
+	// Define sky colors
+	glm::vec3 skyTop = glm::vec3(0.5f, 0.7f, 1.0f);     // Sky blue
+	glm::vec3 skyBottom = glm::vec3(0.8f, 0.9f, 1.0f);  // Light blue/white
+
+	// Lerp between colors based on vertical direction
+	return glm::mix(skyBottom, skyTop, t);
+}
+
 /**
  * CUDA kernel for shading materials in a path tracer.
  *
@@ -510,18 +562,24 @@ __global__ void shadeMaterials(
 			pathSegments[idx].remainingBounces = 0;
 		}
 		else {
-			// For non-emissive materials, calculate the intersection point
-			glm::vec3 isect = getPointOnRay(pathSegments[idx].ray, intersection.t);
-			// Generate a new ray direction based on the material properties
-			scatterRay(pathSegments[idx], isect, intersection.surfaceNormal, material, rng);
+			pathSegments[idx].color = glm::vec3(1.0f);
+			pathSegments[idx].remainingBounces = 0;
+
+			//// For non-emissive materials, calculate the intersection point
+			//glm::vec3 isect = getPointOnRay(pathSegments[idx].ray, intersection.t);
+			//// Generate a new ray direction based on the material properties
+			//scatterRay(pathSegments[idx], isect, intersection.surfaceNormal, material, rng);
 		}
 	}
 	else {
-		// If there's no intersection, set the path color to black and terminate it
-		pathSegments[idx].color = glm::vec3(0.0f);
+		// No intersection - render sky
+		glm::vec3 skyColor = computeSkyGradient(pathSegments[idx].ray.direction);
+		pathSegments[idx].color = skyColor;
 		pathSegments[idx].remainingBounces = 0;
+
 	}
 }
+
 
 // Add the current iteration's output to the overall image
 __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iterationPaths)

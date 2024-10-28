@@ -19,7 +19,7 @@
 #define COMPACT 1
 #define SORT_BY_MATERIAL 0
 
-#define AA 1
+#define AA 0
 #define SSAA 0
 #define AA_SAMPLES 16  // Number of samples per pixel for SSAA
 

@@ -446,7 +446,7 @@ void Scene::setupDefaultCamera() {
     Camera& cam = state.camera;
 
     cam.resolution = glm::vec2(800, 600);
-    cam.position = glm::vec3(0, 0, -3);
+    cam.position = glm::vec3(0, 0, -10);
     cam.lookAt = glm::vec3(0, 0, 0);
     cam.up = glm::vec3(0, 1, 0);
     cam.fov = glm::vec2(45.0f);

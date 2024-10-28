@@ -153,6 +153,23 @@ __host__ __device__ float triangleIntersectionTest(
     glm::vec3& normal,
     glm::vec2& texCoord,
     bool& outside) {
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("\nTriangle test input:\n");
+        printf("Triangle vertices:\n");
+        printf("v0: (%f,%f,%f)\n", tri.v0.x, tri.v0.y, tri.v0.z);
+        printf("v1: (%f,%f,%f)\n", tri.v1.x, tri.v1.y, tri.v1.z);
+        printf("v2: (%f,%f,%f)\n", tri.v2.x, tri.v2.y, tri.v2.z);
+        printf("Triangle normals:\n");
+        printf("n0: (%f,%f,%f)\n", tri.n0.x, tri.n0.y, tri.n0.z);
+        printf("n1: (%f,%f,%f)\n", tri.n1.x, tri.n1.y, tri.n1.z);
+        printf("n2: (%f,%f,%f)\n", tri.n2.x, tri.n2.y, tri.n2.z);
+        printf("Ray:\n");
+        printf("origin: (%f,%f,%f), direction: (%f,%f,%f)\n",
+            r.origin.x, r.origin.y, r.origin.z,
+            r.direction.x, r.direction.y, r.direction.z);
+}
+#endif
 
     // Edge vectors
     glm::vec3 edge1 = tri.v1 - tri.v0;
@@ -162,8 +179,24 @@ __host__ __device__ float triangleIntersectionTest(
     glm::vec3 h = glm::cross(r.direction, edge2);
     float det = glm::dot(edge1, h);
 
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("Edge1: (%f,%f,%f)\n", edge1.x, edge1.y, edge1.z);
+        printf("Edge2: (%f,%f,%f)\n", edge2.x, edge2.y, edge2.z);
+        printf("P (ray direction x edge2): (%f,%f,%f)\n", h.x, h.y, h.z);
+        printf("Determinant: %f\n", det);
+    }
+#endif
+
     // Check if ray is parallel to triangle
-    if (det > -EPSILON && det < EPSILON) return -1.0f;
+    if (det > -EPSILON && det < EPSILON) {
+#ifdef __CUDA_ARCH__
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("REJECTED: Ray parallel to triangle (det near zero)\n");
+        }
+#endif
+        return -1.0f;
+    }
 
     float invDet = 1.0f / det;
 
@@ -171,21 +204,62 @@ __host__ __device__ float triangleIntersectionTest(
     glm::vec3 s = r.origin - tri.v0;
     float u = invDet * glm::dot(s, h);
 
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("T vector (origin - v0): (%f,%f,%f)\n", s.x, s.y, s.z);
+        printf("u parameter: %f\n", u);
+    }
+#endif
+
     // Check if intersection is outside triangle
-    if (u < 0.0f || u > 1.0f) return -1.0f;
+    if (u < 0.0f || u > 1.0f) {
+#ifdef __CUDA_ARCH__
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("REJECTED: u parameter out of range [0,1]: %f\n", u);
+        }
+#endif
+        return -1.0f;
+    }
 
     // Calculate v parameter
     glm::vec3 q = glm::cross(s, edge1);
     float v = invDet * glm::dot(r.direction, q);
 
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("Q vector (T x edge1): (%f,%f,%f)\n", q.x, q.y, q.z);
+        printf("v parameter: %f\n", v);
+    }
+#endif
+
     // Check if intersection is outside triangle
-    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+    if (v < 0.0f || u + v > 1.0f) {
+#ifdef __CUDA_ARCH__
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("REJECTED: v parameter out of range [0,1] or u+v > 1: v=%f, u+v=%f\n", v, u + v);
+        }
+#endif
+        return -1.0f;
+    }
 
     // Calculate t
     float t = invDet * glm::dot(edge2, q);
 
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("t parameter (distance): %f\n", t);
+    }
+#endif
+
     // Check if intersection is behind ray origin
-    if (t <= EPSILON) return -1.0f;
+    if (t <= EPSILON) {
+#ifdef __CUDA_ARCH__
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            printf("REJECTED: Intersection behind ray origin (t <= EPSILON): %f\n", t);
+        }
+#endif
+        return -1.0f;
+    }
 
     // Compute intersection point
     intersectionPoint = getPointOnRay(r, t);
@@ -199,6 +273,18 @@ __host__ __device__ float triangleIntersectionTest(
 
     // Ray always hits triangle from outside
     outside = true;
+
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("HIT FOUND!\n");
+        printf("Distance (t): %f\n", t);
+        printf("Barycentric coordinates (w,u,v): (%f,%f,%f)\n", w, u, v);
+        printf("Hit point: (%f,%f,%f)\n", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
+        printf("Interpolated normal: (%f,%f,%f)\n", normal.x, normal.y, normal.z);
+        printf("Texture coordinates: (%f,%f)\n", texCoord.x, texCoord.y);
+        printf("-----------------------------------------\n");
+    }
+#endif
 
     return t;
 }
@@ -215,6 +301,30 @@ __host__ __device__ float meshIntersectionTest(
     glm::vec3& normal,
     glm::vec2& texCoord,
     bool& outside) {
+
+    // Debug print for input ray
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("World space ray - Origin: (%f,%f,%f), Direction: (%f,%f,%f)\n",
+            r.origin.x, r.origin.y, r.origin.z,
+            r.direction.x, r.direction.y, r.direction.z);
+
+        // Print transform matrix
+        printf("Transform matrix:\n");
+        for (int i = 0; i < 4; i++) {
+            printf("%f %f %f %f\n",
+                mesh.transform[i][0], mesh.transform[i][1],
+                mesh.transform[i][2], mesh.transform[i][3]);
+        }
+
+        printf("Inverse transform matrix:\n");
+        for (int i = 0; i < 4; i++) {
+            printf("%f %f %f %f\n",
+                mesh.inverseTransform[i][0], mesh.inverseTransform[i][1],
+                mesh.inverseTransform[i][2], mesh.inverseTransform[i][3]);
+        }
+    }
+#endif
 
     // Transform ray to object space
     Ray localRay;
@@ -253,9 +363,17 @@ __host__ __device__ float meshIntersectionTest(
 
     if (closest_t == FLT_MAX) return -1.0f;
 
+#ifdef __CUDA_ARCH__
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("Final result - t: %f, Point: (%f,%f,%f), Normal: (%f,%f,%f)\n",
+            closest_t,
+            intersectionPoint.x, intersectionPoint.y, intersectionPoint.z,
+            normal.x, normal.y, normal.z);
+    }
+#endif
+
     return glm::length(r.origin - intersectionPoint);
 }
-
 /**
  * Structure to store GLTF mesh data
  */
