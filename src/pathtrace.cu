@@ -562,13 +562,10 @@ __global__ void shadeMaterials(
 			pathSegments[idx].remainingBounces = 0;
 		}
 		else {
-			pathSegments[idx].color = glm::vec3(1.0f);
-			pathSegments[idx].remainingBounces = 0;
-
-			//// For non-emissive materials, calculate the intersection point
-			//glm::vec3 isect = getPointOnRay(pathSegments[idx].ray, intersection.t);
-			//// Generate a new ray direction based on the material properties
-			//scatterRay(pathSegments[idx], isect, intersection.surfaceNormal, material, rng);
+			// For non-emissive materials, calculate the intersection point
+			glm::vec3 isect = getPointOnRay(pathSegments[idx].ray, intersection.t);
+			// Generate a new ray direction based on the material properties
+			scatterRay(pathSegments[idx], isect, intersection.surfaceNormal, material, rng);
 		}
 	}
 	else {
